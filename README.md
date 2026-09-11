@@ -77,4 +77,8 @@ Four named flags → `{s2,t2,k2,p2}.bgra` under `--capture`. `--helicoid`/`--cat
       --theta results/local/theta50_edges.bin \
       --capture /tmp/qga_swarm_theta
 
+    ./scripts/fleet_pack.sh
+
+Remote homology MAP is unchanged (bud2/6 s2, bud3/7 t2, bud4/8 k2, bud5/9 p2). Remote H/C: bud6 `helicoid_edges.bin`, bud7 `catenoid_edges.bin`. Theta stays `--local`. Never `bin/fleet grok`.
+
 θ family is Model; conjugate helicoid is not `helicoid.py`. Do not add theta stems to `assemble_catalog.sh` this pass. Sidecar MP4 is not occupant proof. Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.

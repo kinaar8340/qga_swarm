@@ -28,6 +28,15 @@ remote_pack() {
     rsync -az "$h:/tmp/${s}_edges.bin" "$ROOT/results/$h/${s}_edges.bin"
     i=$((i + 1))
   done
+  # H/C after homology. MAP stays bud2/6 s2 … bud5/9 p2. Theta stays --local.
+  "$FLEET" run --hosts bud6 -- \
+    "python3 /tmp/qga_swarm_workers/helicoid.py --out /tmp/helicoid_edges.bin"
+  mkdir -p "$ROOT/results/bud6"
+  rsync -az bud6:/tmp/helicoid_edges.bin "$ROOT/results/bud6/helicoid_edges.bin"
+  "$FLEET" run --hosts bud7 -- \
+    "python3 /tmp/qga_swarm_workers/catenoid.py --out /tmp/catenoid_edges.bin"
+  mkdir -p "$ROOT/results/bud7"
+  rsync -az bud7:/tmp/catenoid_edges.bin "$ROOT/results/bud7/catenoid_edges.bin"
 }
 
 if [[ "${1:-}" == "--local" ]]; then
