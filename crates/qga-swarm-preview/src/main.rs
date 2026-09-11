@@ -2154,13 +2154,13 @@ fn run_hang(args: Args) -> Result<()> {
 
 /// L5 length. r_mid = 1 so L ≈ 6 r_mid. Four 2π bulges on one open tube.
 const BODY_LEN: f32 = 6.0;
-const R0_BULGE: f32 = 0.72;
-const A_BULGE: f32 = 0.28;
+const R0_BULGE: f32 = 0.85;
+const A_BULGE: f32 = 0.15;
 const L5_RINGS: u32 = 25;
 const L5_SPAN: f32 = 24.0;
-/// Blend revolution (0) → helical tube (1). Small τ = slight helical segmentation.
-const BODY_TAU: f32 = 0.10;
-const HELIX_R: f32 = 0.08;
+/// Revolution hold first. Helical τ>0 waits until this is a sausage with waists.
+const BODY_TAU: f32 = 0.00;
+const HELIX_R: f32 = 0.00;
 const POLYXENES_RGBA: [[f32; 4]; 4] = [
     [0.08, 0.08, 0.08, 1.00],
     [1.00, 0.45, 0.12, 1.00],
@@ -2353,7 +2353,7 @@ fn body_hud(beat: &str, instar: &str, painted: bool, hel_dphi: f32) -> Vec<HudVe
     hud_quad(&mut v, -0.96, 0.50, -0.38, 0.94, PANEL);
     hud_text(&mut v, -0.94, 0.90, 0.016, "POLYXENES", GOLD_A);
     hud_text(&mut v, -0.94, 0.84, 0.014, "MODEL", INK);
-    hud_text(&mut v, -0.94, 0.78, 0.014, "HELICAL 4x2PI", INK);
+    hud_text(&mut v, -0.94, 0.78, 0.014, "4x2PI BULGES", INK);
     hud_text(
         &mut v,
         -0.94,
@@ -2368,18 +2368,12 @@ fn body_hud(beat: &str, instar: &str, painted: bool, hel_dphi: f32) -> Vec<HudVe
     );
     hud_text(&mut v, -0.94, 0.66, 0.014, "OPEN", GOLD_A);
     hud_text(&mut v, -0.94, 0.60, 0.012, "NOT CHI=2", INK);
-    hud_text(&mut v, -0.94, 0.54, 0.011, "TAU 0.10 P=L/4", INK);
+    hud_text(&mut v, -0.94, 0.54, 0.011, "NECKS = BELTS", INK);
     hud_text(&mut v, -0.94, 0.48, 0.011, "NOT T2 CATALOG", INK);
-    hud_text(&mut v, -0.94, 0.42, 0.011, "NOT BOULIGAND", INK);
-    hud_text(&mut v, -0.94, 0.36, 0.011, "NOT ASSOCIATE TH", INK);
-    hud_text(
-        &mut v,
-        -0.94,
-        0.30,
-        0.011,
-        &format!("HELICAL DPHI {:.1}", hel_dphi),
-        GOLD_A,
-    );
+    if painted {
+        hud_text(&mut v, -0.94, 0.42, 0.011, "SPOTS D/SD", INK);
+    }
+    let _ = hel_dphi;
     hud_quad(&mut v, 0.38, 0.50, 0.96, 0.94, PANEL);
     hud_text(&mut v, 0.40, 0.90, 0.016, "REFUSE", GOLD_A);
     hud_text(&mut v, 0.40, 0.84, 0.014, "HYPOTHESIS / MODEL", INK);
