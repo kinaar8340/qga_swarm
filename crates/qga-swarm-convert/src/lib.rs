@@ -152,6 +152,7 @@ pub struct Chaetotaxy {
     pub rings_l5: u32,
     pub dphi_rms: f32,
     pub phi_order_ok: bool,
+    pub source: String,
     pub sites: Vec<ChaetaSite>,
 }
 
@@ -498,6 +499,11 @@ pub fn parse_chaetotaxy(text: &str) -> Result<Chaetotaxy, ConvertError> {
             .get("phi_order_ok")
             .and_then(|x| x.as_bool())
             .unwrap_or(true),
+        source: v
+            .get("source")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
         sites,
     })
 }

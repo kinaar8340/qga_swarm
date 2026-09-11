@@ -130,6 +130,22 @@ Skeleton then skin (two films, glued at L5 freeze). Paint does not grow.
       output/capture/caterpillar_grow \
       output/capture/caterpillar_skin \
       output/capture/caterpillar_chaeta
+
+Same beat, other tables. `--frames 24` is L5 hold + Δφ ticks only. Not a fourth topology.
+
+    for spec in plexippus-cylinder hinton-cylinder danaus-gilippus melpomene-cylinder polyxenes-cylinder; do
+      cargo run -p qga-swarm-preview --release -- \
+        --beat caterpillar-chaeta --headless --frames 24 --width 1920 --height 1080 \
+        --larva "$HOME/Projects/shellscan/output/recipe/setal-${spec}/net.json" \
+        --chaeta "$HOME/Projects/shellscan/output/recipe/setal-${spec}/chaetotaxy.json" \
+        --capture output/capture/chaeta_${spec}
+    done
+    ./scripts/assemble_copy.sh --out output/mp4/chaetotaxy_compare.mp4 \
+      output/capture/chaeta_plexippus-cylinder \
+      output/capture/chaeta_hinton-cylinder \
+      output/capture/chaeta_danaus-gilippus \
+      output/capture/chaeta_melpomene-cylinder \
+      output/capture/chaeta_polyxenes-cylinder
     ./scripts/assemble_caterpillar.sh --out output/mp4/caterpillar_topology.mp4 \
       output/mp4/caterpillar_topology
 

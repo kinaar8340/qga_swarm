@@ -934,7 +934,7 @@ fn run_caterpillar(args: Args) -> Result<()> {
 }
 
 const BONE: Vec3 = Vec3::new(0.72, 0.72, 0.68);
-const R0: f32 = 0.055;
+const R0: f32 = 0.11;
 const SIGMA: [f32; 5] = [0.45, 0.60, 0.75, 0.90, 1.00];
 const GROUP_FADE: [&str; 6] = ["XD", "D", "SD", "L", "SV", "V"];
 
@@ -1109,8 +1109,8 @@ fn shortest_dphi(a: f32, b: f32) -> f32 {
     d
 }
 
-fn radial_tick(p: Vec3, phi_deg: f32, length: f32) -> Vec<[Vec3; 2]> {
-    let n = 5;
+fn radial_tick(p: Vec3, phi_deg: f32, length: f32, n: usize) -> Vec<[Vec3; 2]> {
+    let n = n.max(2);
     let radial = Vec3::new(phi_deg.to_radians().cos(), phi_deg.to_radians().sin(), 0.0);
     let mut segs = Vec::with_capacity(n);
     let mut prev = p;
@@ -1217,7 +1217,10 @@ fn stamp_atlas(
         let col = site_color(site);
         for &phi in &phis {
             let p = cylinder_point(site.s, phi, radius, height);
-            if ticks {
+            let tentacle = site.kind == "tentacle";
+            if tentacle {
+                stamp_one_orb(renderer, p, R0 * 0.32 * sigma, gold, alpha);
+            } else if ticks {
                 if let Some(h) = site.phi_hinton {
                     let h_signed = if phi < 0.0 { -h } else { h };
                     let hp = cylinder_point(site.s, h_signed, radius, height);
@@ -1238,25 +1241,22 @@ fn stamp_atlas(
             } else {
                 stamp_one_orb(renderer, p, r, col, alpha);
             }
-            if chart && !ticks {
+            if chart && !tentacle {
                 let q = chart_point(site.s, phi.abs(), height);
-                stamp_one_orb(renderer, q, r * 0.7, col, alpha);
-            } else if chart && ticks {
-                let q = chart_point(site.s, phi.abs(), height);
-                stamp_one_orb(renderer, q, r * 0.7, gold, alpha);
+                stamp_one_orb(renderer, q, r * 0.7, if ticks { gold } else { col }, alpha);
             }
-            if amp_ticks {
-                // Tentacle ruling: amp in body units. Seta tick: amp × 2 cells so
-                // D2 vs V1 reads without a second mesh.
+            if tentacle && tentacle_frac > 1e-4 {
+                let len = site.amp * sigma * tentacle_frac.clamp(0.0, 1.0) * 0.55;
+                push_col(&mut extra, &radial_tick(p, phi, len, 3), gold);
+                if chart {
+                    let q = chart_point(site.s, phi.abs(), height);
+                    stamp_one_orb(renderer, q, R0 * 0.22 * sigma, gold, alpha);
+                }
+            } else if amp_ticks && !tentacle {
                 let cell_len = std::f32::consts::TAU * radius / atlas.n_phi.max(1) as f32;
-                let len = if site.kind == "tentacle" {
-                    site.amp * sigma * tentacle_frac.clamp(0.0, 1.0)
-                } else {
-                    site.amp * sigma * (2.0 * cell_len)
-                };
+                let len = site.amp * sigma * (2.2 * cell_len);
                 if len > 1e-4 {
-                    let tick_col = if site.kind == "tentacle" { gold } else { col };
-                    push_col(&mut extra, &radial_tick(p, phi, len), tick_col);
+                    push_col(&mut extra, &radial_tick(p, phi, len, 5), col);
                 }
             }
         }
@@ -1280,6 +1280,9 @@ fn chart_frame(height: f32) -> Vec<[Vec3; 2]> {
 
 fn chaeta_sheet(i: u32, frames: u32) -> (u8, f32) {
     let n = frames.max(1);
+    if n <= 24 {
+        return (6, 1.0);
+    }
     let x = i as f32 * 96.0 / n as f32;
     if x < 12.0 {
         (0, (x / 12.0).clamp(0.0, 1.0))
@@ -1298,11 +1301,35 @@ fn chaeta_sheet(i: u32, frames: u32) -> (u8, f32) {
     }
 }
 
-fn chaeta_hud(n: usize, rms: f32, order_ok: bool, cell_jump: bool, beat: &str) -> Vec<HudVert> {
-    let mut v = plate_hud("SCALED CHAETOTAXY", None, beat, 0.0, true);
+fn species_label(src: &str) -> &'static str {
+    let s = src.to_ascii_lowercase();
+    if s.contains("gilippus") {
+        "GILIPPUS"
+    } else if s.contains("melpomene") {
+        "MELPOMENE"
+    } else if s.contains("polyxenes") {
+        "POLYXENES"
+    } else if s.contains("hinton") {
+        "HINTON"
+    } else if s.contains("plexippus") {
+        "PLEXIPPUS"
+    } else {
+        "CHAETA"
+    }
+}
+
+fn chaeta_hud(
+    source: &str,
+    n: usize,
+    rms: f32,
+    order_ok: bool,
+    cell_jump: bool,
+    beat: &str,
+) -> Vec<HudVert> {
+    let mut v = plate_hud(species_label(source), None, beat, 0.0, true);
     const INK: [f32; 4] = [0.92, 0.95, 1.00, 0.92];
     const GOLD_A: [f32; 4] = [1.00, 0.78, 0.38, 0.95];
-    hud_text(&mut v, -0.94, 0.48, 0.012, &format!("SITES {n}"), INK);
+    hud_text(&mut v, -0.94, 0.48, 0.012, &format!("N {n}"), INK);
     hud_text(&mut v, -0.94, 0.42, 0.012, "ORDER XD-D-SD-L-SV-V", INK);
     hud_text(
         &mut v,
@@ -1320,6 +1347,13 @@ fn chaeta_hud(n: usize, rms: f32, order_ok: bool, cell_jump: bool, beat: &str) -
     }
     hud_text(&mut v, -0.20, 0.16, 0.012, "OPEN CYLINDER", INK);
     hud_text(&mut v, -0.20, 0.10, 0.012, "NOT CHI=2", INK);
+    hud_text(&mut v, 0.38, -0.58, 0.012, "MIDDORSAL", INK);
+    hud_text(&mut v, 0.62, -0.58, 0.012, "MIDVENTRAL", INK);
+    hud_text(&mut v, 0.48, 0.18, 0.012, "S ANT", INK);
+    hud_text(&mut v, 0.48, -0.96, 0.012, "S POST", INK);
+    if order_ok {
+        hud_text(&mut v, -0.94, 0.30, 0.012, "PHI ORDER OK", GOLD_A);
+    }
     v
 }
 
@@ -1778,7 +1812,14 @@ fn run_chaeta(args: Args) -> Result<()> {
         renderer.write_particles(&gpu, &[])?;
         renderer.write_hud(
             &gpu,
-            &chaeta_hud(n_sites, atlas.dphi_rms, atlas.phi_order_ok, cell_jump, beat),
+            &chaeta_hud(
+                &atlas.source,
+                n_sites,
+                atlas.dphi_rms,
+                atlas.phi_order_ok,
+                cell_jump,
+                beat,
+            ),
         )?;
         let grab = capture_dir.is_some();
         if let Some(frame) = renderer.render(&mut gpu, &camera, &vis, time, grab)? {
