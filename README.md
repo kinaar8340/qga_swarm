@@ -41,7 +41,12 @@ This repo consumes those dumps and four CPU wire generators.
     ./scripts/fleet_pack.sh --local
     cargo test -p qga-swarm-convert
     cargo check -p qga-swarm-preview
-    cargo run -p qga-swarm-preview -- --headless --frames 8 --lines /tmp/s2_edges.bin
-    cargo run -p qga-swarm-preview -- --headless --frames 8 --lines /tmp/s2_edges.bin --capture output/mp4/
+    cargo run -p qga-swarm-preview -- --headless --frames 8 --lines results/local/s2_edges.bin
+    cargo run -p qga-swarm-preview -- --headless --frames 8 \
+      --s2 results/local/s2_edges.bin \
+      --t2 results/local/t2_edges.bin \
+      --k2 results/local/k2_edges.bin \
+      --p2 results/local/p2_edges.bin \
+      --capture /tmp/qga_swarm_four
 
-`--capture DIR` writes `last.bgra` only. No ffmpeg. Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.
+Four named flags → `{s2,t2,k2,p2}.bgra` under `--capture`. `--lines` alone → `last.bgra` (cyan unless the stem is s2|t2|k2|p2). Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.
