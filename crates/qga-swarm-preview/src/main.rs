@@ -429,15 +429,30 @@ fn plate_hud(
     hud_text(&mut v, -0.94, 0.90, 0.016, left_title, GOLD_A);
     hud_text(&mut v, -0.94, 0.84, 0.014, "CARDS + HUBS", INK);
     hud_text(&mut v, -0.94, 0.78, 0.014, "NOT OCEAN", INK);
-    hud_text(&mut v, -0.94, 0.72, 0.014, "P22 1.0", INK);
-    hud_text(&mut v, -0.94, 0.66, 0.014, "POLYOMA 1/6", INK);
-    if let Some(o) = occ {
-        let line = format!("AGREE {:.2}", o.section_agree);
-        hud_text(&mut v, -0.94, 0.60, 0.014, &line, GOLD_A);
-        hud_text(&mut v, -0.94, 0.54, 0.012, "HYPOTHESIS", INK);
+    if open {
+        hud_text(&mut v, -0.94, 0.72, 0.014, "SHELLSCAN DUMP", INK);
+        hud_text(&mut v, -0.94, 0.66, 0.014, "READ ONLY", INK);
+        if let Some(o) = occ {
+            hud_text(
+                &mut v,
+                -0.94,
+                0.60,
+                0.012,
+                &format!("AGREE {:.2}", o.section_agree),
+                GOLD_A,
+            );
+        }
     } else {
-        hud_text(&mut v, -0.94, 0.60, 0.014, "SHELLSCAN DUMP", INK);
-        hud_text(&mut v, -0.94, 0.54, 0.014, "READ ONLY", INK);
+        hud_text(&mut v, -0.94, 0.72, 0.014, "P22 1.0", INK);
+        hud_text(&mut v, -0.94, 0.66, 0.014, "POLYOMA 1/6", INK);
+        if let Some(o) = occ {
+            let line = format!("AGREE {:.2}", o.section_agree);
+            hud_text(&mut v, -0.94, 0.60, 0.014, &line, GOLD_A);
+            hud_text(&mut v, -0.94, 0.54, 0.012, "HYPOTHESIS", INK);
+        } else {
+            hud_text(&mut v, -0.94, 0.60, 0.014, "SHELLSCAN DUMP", INK);
+            hud_text(&mut v, -0.94, 0.54, 0.014, "READ ONLY", INK);
+        }
     }
 
     hud_quad(&mut v, 0.38, 0.50, 0.96, 0.94, PANEL);
@@ -446,6 +461,12 @@ fn plate_hud(
     hud_text(&mut v, 0.40, 0.78, 0.014, "FACEPLATE UNUSED", INK);
     hud_text(&mut v, 0.40, 0.72, 0.014, "CATALOG CANNOT", INK);
     hud_text(&mut v, 0.40, 0.66, 0.014, "PROVE OCCUPANT", INK);
+    if open {
+        hud_text(&mut v, 0.40, 0.60, 0.012, "CLOSED NET SCORES", GOLD_A);
+        hud_text(&mut v, 0.40, 0.54, 0.012, "P22 1.0", INK);
+        hud_text(&mut v, 0.40, 0.48, 0.012, "POLYOMA 1/6", INK);
+        hud_text(&mut v, 0.40, 0.42, 0.012, "NOT THIS DUMP", INK);
+    }
 
     hud_quad(&mut v, -0.22, -0.92, 0.08, -0.72, VENN_A);
     hud_quad(&mut v, -0.08, -0.92, 0.22, -0.72, VENN_B);
@@ -913,7 +934,7 @@ fn run_caterpillar(args: Args) -> Result<()> {
 }
 
 const BONE: Vec3 = Vec3::new(0.72, 0.72, 0.68);
-const R0: f32 = 0.022;
+const R0: f32 = 0.055;
 const SIGMA: [f32; 5] = [0.45, 0.60, 0.75, 0.90, 1.00];
 const GROUP_FADE: [&str; 6] = ["XD", "D", "SD", "L", "SV", "V"];
 
@@ -1073,11 +1094,65 @@ fn site_color(site: &ChaetaSite) -> Vec3 {
 }
 
 fn stamp_one_orb(renderer: &mut Renderer, p: Vec3, r: f32, col: Vec3, alpha: f32) {
-    let m = Mat4::from_translation(p) * Mat4::from_scale(Vec3::splat(r.max(0.006)));
+    let m = Mat4::from_translation(p) * Mat4::from_scale(Vec3::splat(r.max(0.008)));
     renderer.draw_geodesic_orb_alpha(m, col, alpha.clamp(0.02, 1.0));
 }
 
-/// Rebuild orb instances only. Skeleton lines stay frozen on the chaeta reel.
+fn shortest_dphi(a: f32, b: f32) -> f32 {
+    let mut d = b - a;
+    while d > 180.0 {
+        d -= 360.0;
+    }
+    while d < -180.0 {
+        d += 360.0;
+    }
+    d
+}
+
+fn radial_tick(p: Vec3, phi_deg: f32, length: f32) -> Vec<[Vec3; 2]> {
+    let n = 5;
+    let radial = Vec3::new(phi_deg.to_radians().cos(), phi_deg.to_radians().sin(), 0.0);
+    let mut segs = Vec::with_capacity(n);
+    let mut prev = p;
+    for i in 1..=n {
+        let q = p + radial * length * (i as f32 / n as f32);
+        segs.push([prev, q]);
+        prev = q;
+    }
+    segs
+}
+
+fn azimuthal_chord(s: f32, phi0: f32, phi1: f32, radius: f32, height: f32) -> Vec<[Vec3; 2]> {
+    let d = shortest_dphi(phi0, phi1);
+    let n = 6;
+    let mut segs = Vec::with_capacity(n);
+    let mut prev = cylinder_point(s, phi0, radius, height);
+    for i in 1..=n {
+        let phi = phi0 + d * (i as f32 / n as f32);
+        let q = cylinder_point(s, phi, radius, height);
+        segs.push([prev, q]);
+        prev = q;
+    }
+    segs
+}
+
+fn push_col(out: &mut Vec<LineVert>, segs: &[[Vec3; 2]], col: Vec3) {
+    let c = [col.x, col.y, col.z, 1.0];
+    for [a, b] in segs {
+        out.push(LineVert {
+            pos: (*a).into(),
+            pad: 0.0,
+            color: c,
+        });
+        out.push(LineVert {
+            pos: (*b).into(),
+            pad: 0.0,
+            color: c,
+        });
+    }
+}
+
+/// Occupancy orbs + amp ticks + optional Δφ chords. Skeleton stays uploaded.
 fn stamp_atlas(
     renderer: &mut Renderer,
     atlas: &Chaetotaxy,
@@ -1091,11 +1166,14 @@ fn stamp_atlas(
     allow_sub: bool,
     allow_tentacle: bool,
     allow_spiracle: bool,
-    tentacle_len: f32,
+    tentacle_frac: f32,
     ticks: bool,
     chart: bool,
-) -> Vec<[Vec3; 2]> {
-    let mut tent_segs = Vec::new();
+    amp_ticks: bool,
+) -> (Vec<LineVert>, bool) {
+    let mut extra = Vec::new();
+    let mut cell_jump = false;
+    let cell = 360.0 / atlas.n_phi.max(1) as f32;
     let cyan = CYAN;
     let gold = GOLD;
     for site in &atlas.sites {
@@ -1141,30 +1219,49 @@ fn stamp_atlas(
             let p = cylinder_point(site.s, phi, radius, height);
             if ticks {
                 if let Some(h) = site.phi_hinton {
-                    let hp = cylinder_point(site.s, if phi < 0.0 { -h } else { h }, radius, height);
-                    stamp_one_orb(renderer, hp, r * 0.7, cyan, alpha);
+                    let h_signed = if phi < 0.0 { -h } else { h };
+                    let hp = cylinder_point(site.s, h_signed, radius, height);
+                    stamp_one_orb(renderer, hp, r * 0.75, cyan, alpha);
+                    let dphi = shortest_dphi(h_signed, phi).abs();
+                    if dphi > cell {
+                        cell_jump = true;
+                    }
+                    let chord = azimuthal_chord(site.s, h_signed, phi, radius, height);
+                    push_col(&mut extra, &chord, gold * 0.85 + cyan * 0.15);
+                    if chart {
+                        let q0 = chart_point(site.s, h.abs(), height);
+                        let q1 = chart_point(site.s, phi.abs(), height);
+                        push_col(&mut extra, &[[q0, q1]], gold);
+                    }
                 }
                 stamp_one_orb(renderer, p, r, gold, alpha);
             } else {
                 stamp_one_orb(renderer, p, r, col, alpha);
             }
-            if chart {
+            if chart && !ticks {
                 let q = chart_point(site.s, phi.abs(), height);
-                stamp_one_orb(renderer, q, r * 0.7, if ticks { gold } else { col }, alpha);
-                if ticks {
-                    if let Some(h) = site.phi_hinton {
-                        let hq = chart_point(site.s, h.abs(), height);
-                        stamp_one_orb(renderer, hq, r * 0.55, cyan, alpha);
-                    }
-                }
+                stamp_one_orb(renderer, q, r * 0.7, col, alpha);
+            } else if chart && ticks {
+                let q = chart_point(site.s, phi.abs(), height);
+                stamp_one_orb(renderer, q, r * 0.7, gold, alpha);
             }
-            if tentacle_len > 1e-4 && site.kind == "tentacle" {
-                let radial = Vec3::new(phi.to_radians().cos(), phi.to_radians().sin(), 0.0);
-                tent_segs.push([p, p + radial * tentacle_len * site.amp * sigma]);
+            if amp_ticks {
+                // Tentacle ruling: amp in body units. Seta tick: amp × 2 cells so
+                // D2 vs V1 reads without a second mesh.
+                let cell_len = std::f32::consts::TAU * radius / atlas.n_phi.max(1) as f32;
+                let len = if site.kind == "tentacle" {
+                    site.amp * sigma * tentacle_frac.clamp(0.0, 1.0)
+                } else {
+                    site.amp * sigma * (2.0 * cell_len)
+                };
+                if len > 1e-4 {
+                    let tick_col = if site.kind == "tentacle" { gold } else { col };
+                    push_col(&mut extra, &radial_tick(p, phi, len), tick_col);
+                }
             }
         }
     }
-    tent_segs
+    (extra, cell_jump)
 }
 
 fn chart_frame(height: f32) -> Vec<[Vec3; 2]> {
@@ -1201,12 +1298,12 @@ fn chaeta_sheet(i: u32, frames: u32) -> (u8, f32) {
     }
 }
 
-fn chaeta_hud(n: usize, rms: f32, order_ok: bool, beat: &str) -> Vec<HudVert> {
+fn chaeta_hud(n: usize, rms: f32, order_ok: bool, cell_jump: bool, beat: &str) -> Vec<HudVert> {
     let mut v = plate_hud("SCALED CHAETOTAXY", None, beat, 0.0, true);
     const INK: [f32; 4] = [0.92, 0.95, 1.00, 0.92];
     const GOLD_A: [f32; 4] = [1.00, 0.78, 0.38, 0.95];
-    hud_text(&mut v, -0.94, 0.48, 0.012, &format!("SITES {n}x2"), INK);
-    hud_text(&mut v, -0.94, 0.42, 0.012, "ORDER D-SD-L-SV-V", INK);
+    hud_text(&mut v, -0.94, 0.48, 0.012, &format!("SITES {n}"), INK);
+    hud_text(&mut v, -0.94, 0.42, 0.012, "ORDER XD-D-SD-L-SV-V", INK);
     hud_text(
         &mut v,
         -0.94,
@@ -1215,11 +1312,14 @@ fn chaeta_hud(n: usize, rms: f32, order_ok: bool, beat: &str) -> Vec<HudVert> {
         &format!("DPHI RMS {:.1}", rms),
         GOLD_A,
     );
-    if !order_ok {
+    if !order_ok || cell_jump {
         hud_text(&mut v, -0.20, 0.34, 0.016, "REFUSE", GOLD_A);
+        if cell_jump {
+            hud_text(&mut v, -0.20, 0.28, 0.012, "SNAP CELL", GOLD_A);
+        }
     }
-    hud_text(&mut v, -0.20, 0.28, 0.012, "OPEN CYLINDER", INK);
-    hud_text(&mut v, -0.20, 0.22, 0.012, "NOT CHI=2", INK);
+    hud_text(&mut v, -0.20, 0.16, 0.012, "OPEN CYLINDER", INK);
+    hud_text(&mut v, -0.20, 0.10, 0.012, "NOT CHI=2", INK);
     v
 }
 
@@ -1322,7 +1422,7 @@ fn run_grow(args: Args) -> Result<()> {
             let instar = (stage + 1).clamp(1, 5);
             let sigma = SIGMA[(instar as usize).saturating_sub(1)];
             if let Some(atlas) = atlas.as_ref() {
-                stamp_atlas(
+                let _ = stamp_atlas(
                     &mut renderer,
                     atlas,
                     instar,
@@ -1335,7 +1435,8 @@ fn run_grow(args: Args) -> Result<()> {
                     true,
                     true,
                     true,
-                    0.0,
+                    1.0,
+                    false,
                     false,
                     false,
                 );
@@ -1594,52 +1695,66 @@ fn run_chaeta(args: Args) -> Result<()> {
         let time = i as f32 / 24.0;
         vis.pulse = 0.5 + 0.5 * time.sin();
 
-        let (prim, sub, tent, spir, step, tlen, ticks, beat) = if refuse_order && phase >= 1 {
-            (
-                true,
-                false,
-                false,
-                false,
-                Some((0usize, 1.0)),
-                0.0,
-                false,
-                "REFUSE",
-            )
-        } else {
-            match phase {
-                0 => (false, false, false, false, None, 0.0, false, "SKIN HOLD"),
-                1 => {
-                    let g = (frac * 6.0).floor() as usize;
-                    let f = (frac * 6.0).fract().max(0.15);
-                    (
+        let (prim, sub, tent, spir, step, tfrac, ticks, amp_ticks, beat) =
+            if refuse_order && phase >= 1 {
+                (
+                    true,
+                    false,
+                    false,
+                    false,
+                    Some((0usize, 1.0)),
+                    0.0,
+                    false,
+                    true,
+                    "REFUSE",
+                )
+            } else {
+                match phase {
+                    0 => (
+                        false,
+                        false,
+                        false,
+                        false,
+                        None,
+                        0.0,
+                        false,
+                        false,
+                        "SKIN HOLD",
+                    ),
+                    1 => {
+                        let g = (frac * 6.0).floor() as usize;
+                        let f = (frac * 6.0).fract().max(0.15);
+                        (
+                            true,
+                            false,
+                            false,
+                            false,
+                            Some((g.min(5), f)),
+                            0.0,
+                            false,
+                            true,
+                            "PRIMARIES",
+                        )
+                    }
+                    2 => (
+                        true,
                         true,
                         false,
                         false,
-                        false,
-                        Some((g.min(5), f)),
+                        None,
                         0.0,
                         false,
-                        "PRIMARIES",
-                    )
+                        true,
+                        "SUBPRIMARY",
+                    ),
+                    3 => (true, true, true, false, None, frac, false, true, "TENTACLE"),
+                    4 => (true, true, true, true, None, 1.0, false, true, "SPIRACLE"),
+                    5 => (true, true, true, true, None, 1.0, true, true, "DPHI TICK"),
+                    _ => (true, true, true, true, None, 1.0, true, true, "HOLD"),
                 }
-                2 => (true, true, false, false, None, 0.0, false, "SUBPRIMARY"),
-                3 => (
-                    true,
-                    true,
-                    true,
-                    false,
-                    None,
-                    0.22 * frac,
-                    false,
-                    "TENTACLE",
-                ),
-                4 => (true, true, true, true, None, 0.22, false, "SPIRACLE"),
-                5 => (true, true, true, true, None, 0.22, true, "DPHI TICK"),
-                _ => (true, true, true, true, None, 0.22, true, "HOLD"),
-            }
-        };
+            };
 
-        let tent_segs = stamp_atlas(
+        let (extra, cell_jump) = stamp_atlas(
             &mut renderer,
             &atlas,
             5,
@@ -1652,33 +1767,18 @@ fn run_chaeta(args: Args) -> Result<()> {
             sub,
             tent,
             spir,
-            tlen,
+            tfrac,
             ticks,
             true,
+            amp_ticks,
         );
         let mut verts = skin_verts.clone();
-        for [a, b] in &tent_segs {
-            let col = [GOLD.x, GOLD.y, GOLD.z, 1.0];
-            verts.push(LineVert {
-                pos: (*a).into(),
-                pad: 0.0,
-                color: col,
-            });
-            verts.push(LineVert {
-                pos: (*b).into(),
-                pad: 0.0,
-                color: col,
-            });
-        }
-        if !tent_segs.is_empty() {
-            renderer.update_line_verts(&gpu, &verts);
-        } else if phase == 0 {
-            renderer.update_line_verts(&gpu, &skin_verts);
-        }
+        verts.extend(extra);
+        renderer.update_line_verts(&gpu, &verts);
         renderer.write_particles(&gpu, &[])?;
         renderer.write_hud(
             &gpu,
-            &chaeta_hud(n_sites, atlas.dphi_rms, atlas.phi_order_ok, beat),
+            &chaeta_hud(n_sites, atlas.dphi_rms, atlas.phi_order_ok, cell_jump, beat),
         )?;
         let grab = capture_dir.is_some();
         if let Some(frame) = renderer.render(&mut gpu, &camera, &vis, time, grab)? {
