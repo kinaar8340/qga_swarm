@@ -4,8 +4,8 @@
 use anyhow::{bail, Context, Result};
 use glam::{Mat4, Vec3};
 use qga_gpu::{
-    hud_quad, hud_text, print_claim_banner, Camera, GpuContext, GpuHub, GpuParticle, HudVert,
-    LineStyle, LineVert, Renderer, VisualState,
+    hud_quad, hud_text, print_claim_banner, Camera, GpuContext, GpuParticle, HudVert, LineStyle,
+    LineVert, Renderer, VisualState,
 };
 use qga_swarm_convert::{
     catalog_line_verts, face_centroids, glam_edges, hexavalent_hubs, load_net_json, load_occupancy,
@@ -20,8 +20,6 @@ const ORANGE: Vec3 = Vec3::new(1.00, 0.40, 0.20);
 const MAGENTA: Vec3 = Vec3::new(1.00, 0.20, 0.80);
 
 const C_ASSOC: f32 = 0.35;
-const U_STAR: f32 = 0.30;
-const V_STAR: f32 = 0.0;
 const MOTE_CAP: usize = 512;
 const POLY_ALPHA: f32 = 1.0 / 6.0;
 
@@ -99,12 +97,12 @@ struct Catalog {
 }
 
 struct Mote {
-    u: f32,
-    v: f32,
+    ruling: usize,
+    s: f32,
+    dir: f32,
     pos: Vec3,
     vel: Vec3,
     hue: f32,
-    leak: bool,
 }
 
 fn parse_args() -> Result<Args> {
@@ -320,19 +318,21 @@ fn edges_to_verts(edges: &[[Vec3; 2]], color: Vec3) -> Vec<LineVert> {
         .collect()
 }
 
-fn catalog_to_verts(segs: &[CatalogSeg]) -> Vec<LineVert> {
+fn catalog_to_verts(segs: &[CatalogSeg], alpha: f32) -> Vec<LineVert> {
+    let a = alpha.clamp(0.0, 1.0);
     segs.iter()
         .flat_map(|s| {
+            let col = [s.color[0] * a, s.color[1] * a, s.color[2] * a, 1.0];
             [
                 LineVert {
                     pos: s.a,
                     pad: 0.0,
-                    color: s.color,
+                    color: col,
                 },
                 LineVert {
                     pos: s.b,
                     pad: 0.0,
-                    color: s.color,
+                    color: col,
                 },
             ]
         })
@@ -414,6 +414,81 @@ fn d_associate(u: f32, v: f32, theta: f32) -> Vec3 {
     -catenoid(u, v) * theta.sin() + helicoid(u, v) * theta.cos()
 }
 
+fn theta_of(tau: f32) -> f32 {
+    std::f32::consts::FRAC_PI_2 * tau
+}
+
+/// 48-frame sheet scaled to `--frames`. Lens is the long beat.
+fn sheet(i: u32, frames: u32) -> (u8, f32, f32) {
+    let n = frames.max(1);
+    let tau = if n <= 1 {
+        0.0
+    } else {
+        i as f32 / (n - 1) as f32
+    };
+    let x = i as f32 * 48.0 / n as f32;
+    let (beat, start, len) = if x < 8.0 {
+        (0u8, 0.0, 8.0)
+    } else if x < 16.0 {
+        (1, 8.0, 8.0)
+    } else if x < 28.0 {
+        (2, 16.0, 12.0)
+    } else if x < 36.0 {
+        (3, 28.0, 8.0)
+    } else if x < 44.0 {
+        (4, 36.0, 8.0)
+    } else {
+        (5, 44.0, 4.0)
+    };
+    let frac = ((x - start) / len).clamp(0.0, 1.0);
+    (beat, frac, tau)
+}
+
+fn polyline_segs(pts: &[Vec3]) -> Vec<[Vec3; 2]> {
+    pts.windows(2).map(|w| [w[0], w[1]]).collect()
+}
+
+/// Allowed: `update_line_verts`. Rebuild associate-family rulings. Do not touch the mesh.
+fn associate_polylines(theta: f32, n: usize) -> Vec<Vec<Vec3>> {
+    let n = n.max(2);
+    let mut lines = Vec::with_capacity(16);
+    for k in 0..8 {
+        let v = -std::f32::consts::PI + 2.0 * std::f32::consts::PI * k as f32 / 8.0;
+        let mut pts = Vec::with_capacity(n);
+        for i in 0..n {
+            let u = -1.0 + 2.0 * i as f32 / (n - 1) as f32;
+            pts.push(associate(u, v, theta));
+        }
+        lines.push(pts);
+    }
+    for k in 0..8 {
+        let u = -1.0 + 2.0 * k as f32 / 7.0;
+        let mut pts = Vec::with_capacity(n);
+        for i in 0..n {
+            let v = -std::f32::consts::PI + 2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32;
+            pts.push(associate(u, v, theta));
+        }
+        lines.push(pts);
+    }
+    lines
+}
+
+fn associate_edges(theta: f32, n: usize) -> Vec<[Vec3; 2]> {
+    associate_polylines(theta, n)
+        .iter()
+        .flat_map(|pts| polyline_segs(pts))
+        .collect()
+}
+
+/// Allowed: `draw_geodesic_orb_alpha`. Waist v=0. scale and α follow |∂p/∂t|.
+fn midplane_orb(theta: f32) -> (Mat4, f32) {
+    let p = associate(0.0, 0.0, theta);
+    let speed = d_associate(0.0, 0.0, theta).length() / 0.35;
+    let speed = speed.clamp(0.0, 1.0);
+    let m = Mat4::from_translation(p) * Mat4::from_scale(Vec3::splat(0.05 + 0.04 * speed));
+    (m, (0.25 + 0.75 * speed).clamp(0.02, 1.0))
+}
+
 fn hyperboloid_point(family: usize, alpha: f32, t: f32) -> Vec3 {
     let a = 0.70f32;
     let c = 0.55f32;
@@ -423,6 +498,29 @@ fn hyperboloid_point(family: usize, alpha: f32, t: f32) -> Vec3 {
     } else {
         Vec3::new(a * (ca + t * sa), a * (sa - t * ca), c * t)
     }
+}
+
+fn hyperboloid_edges(n: usize) -> Vec<[Vec3; 2]> {
+    let n = n.max(2);
+    let mut segs = Vec::new();
+    for k in 0..8 {
+        let th = 2.0 * std::f32::consts::PI * k as f32 / 8.0;
+        for family in 0..2 {
+            let mut pts = Vec::with_capacity(n);
+            for i in 0..n {
+                let t = -1.0 + 2.0 * i as f32 / (n - 1) as f32;
+                pts.push(hyperboloid_point(family, th, t));
+            }
+            segs.extend(polyline_segs(&pts));
+        }
+    }
+    segs
+}
+
+fn associate_line_verts(theta: f32, n: usize) -> Vec<LineVert> {
+    let w = theta.sin().abs();
+    let col = ORANGE * (1.0 - w) + CYAN * w;
+    edges_to_verts(&associate_edges(theta, n), col)
 }
 
 fn load_catalog(dir: &Path) -> Result<Catalog> {
@@ -439,71 +537,93 @@ fn load_catalog(dir: &Path) -> Result<Catalog> {
     })
 }
 
-fn stamp_hubs(renderer: &mut Renderer, cat: &Catalog, hex_alpha: f32, mid: Option<(Vec3, f32)>) {
+fn stamp_hubs(
+    renderer: &mut Renderer,
+    cat: &Catalog,
+    pent_alpha: f32,
+    hex_alpha: f32,
+    mid: Option<(Mat4, f32)>,
+) {
+    let pa = pent_alpha.clamp(0.02, 1.0);
     for h in &cat.pent {
         let m = Mat4::from_translation(Vec3::from(h.pos)) * Mat4::from_scale(Vec3::splat(h.radius));
-        renderer.draw_geodesic_orb_alpha(m, CYAN, 1.0);
+        renderer.draw_geodesic_orb_alpha(m, CYAN, pa);
     }
+    let ha = hex_alpha.clamp(0.02, 1.0);
     if hex_alpha > 1e-4 {
         for h in &cat.hex {
             let m =
                 Mat4::from_translation(Vec3::from(h.pos)) * Mat4::from_scale(Vec3::splat(h.radius));
-            renderer.draw_geodesic_orb_alpha(m, ORANGE, hex_alpha.clamp(0.02, 1.0));
+            renderer.draw_geodesic_orb_alpha(m, ORANGE, ha);
         }
     }
-    if let Some((p, a)) = mid {
-        let m = Mat4::from_translation(p) * Mat4::from_scale(Vec3::splat(0.07));
+    if let Some((m, a)) = mid {
         renderer.draw_geodesic_orb_alpha(m, GOLD, a.clamp(0.02, 1.0));
     }
 }
 
-fn upload_breath(renderer: &mut Renderer, gpu: &GpuContext, cat: &Catalog) -> Result<()> {
-    let hubs: Vec<GpuHub> = cat
-        .pent
-        .iter()
-        .map(|h| GpuHub::new(Vec3::from(h.pos), h.radius, CYAN))
-        .collect();
-    renderer.upload_hubs(gpu, &hubs)?;
-    Ok(())
-}
-
-fn seed_motes(cat: &Catalog) -> Vec<Mote> {
+fn seed_motes(lines: &[Vec<Vec3>], cat: &Catalog) -> Vec<Mote> {
     let mut motes = Vec::new();
-    for k in 0..8 {
-        let v = -std::f32::consts::PI + 2.0 * std::f32::consts::PI * k as f32 / 8.0;
-        for i in 0..32 {
+    let rulings = lines.iter().take(8).collect::<Vec<_>>();
+    for (ri, pts) in rulings.iter().enumerate() {
+        if pts.len() < 2 {
+            continue;
+        }
+        for k in 0..32 {
             if motes.len() >= MOTE_CAP {
                 return motes;
             }
-            let u = -1.0 + 2.0 * i as f32 / 31.0;
-            let pos = helicoid(u, v);
-            let bits = nearest_section(&cat.cents, &cat.faces, pos.to_array());
-            motes.push(Mote {
-                u,
-                v,
-                pos,
+            let s = k as f32 / 31.0;
+            let mut m = Mote {
+                ruling: ri,
+                s,
+                dir: if k % 2 == 0 { 1.0 } else { -1.0 },
+                pos: Vec3::ZERO,
                 vel: Vec3::ZERO,
-                hue: SECTION_HUE[bits],
-                leak: bits == 2,
-            });
+                hue: SECTION_HUE[0],
+            };
+            place_mote(&mut m, pts);
+            let bits = nearest_section(&cat.cents, &cat.faces, m.pos.to_array());
+            m.hue = SECTION_HUE[bits];
+            motes.push(m);
         }
     }
     motes
 }
 
-fn step_motes(motes: &mut [Mote], cat: &Catalog, theta: f32, dtheta: f32) {
+fn place_mote(m: &mut Mote, pts: &[Vec3]) {
+    let nseg = (pts.len() - 1) as f32;
+    let f = (m.s.clamp(0.0, 1.0) * nseg).min(nseg - 1e-4);
+    let i = f.floor() as usize;
+    let t = f - i as f32;
+    let a = pts[i];
+    let b = pts[i + 1];
+    m.pos = a.lerp(b, t);
+    m.vel = (b - a).normalize_or_zero() * m.dir;
+}
+
+/// Allowed: `write_particles`, N ≤ 512. CPU Euler along the ruling. Bounce at rims.
+fn advect(motes: &mut [Mote], lines: &[Vec<Vec3>], dt: f32, cat: &Catalog) {
     for m in motes.iter_mut() {
-        if m.leak {
-            m.u = (m.u + 0.01 * dtheta.signum()).clamp(-1.4, 1.4);
-        } else {
-            m.u *= 0.985;
+        let Some(pts) = lines.get(m.ruling) else {
+            continue;
+        };
+        if pts.len() < 2 {
+            continue;
         }
-        let next = associate(m.u, m.v, theta);
-        m.vel = (next - m.pos) / 0.016_f32.max(1e-4);
-        m.pos = next;
+        m.s += m.dir * 0.35 * dt;
+        if m.s > 1.0 {
+            m.s = 2.0 - m.s;
+            m.dir = -m.dir;
+        }
+        if m.s < 0.0 {
+            m.s = -m.s;
+            m.dir = -m.dir;
+        }
+        m.s = m.s.clamp(0.0, 1.0);
+        place_mote(m, pts);
         let bits = nearest_section(&cat.cents, &cat.faces, m.pos.to_array());
         m.hue = SECTION_HUE[bits];
-        m.leak = bits == 2;
     }
 }
 
@@ -578,11 +698,6 @@ fn run_caterpillar(args: Args) -> Result<()> {
     };
 
     let s2 = job_edges(&args.jobs, Bin::S2).unwrap_or_default();
-    let t2 = job_edges(&args.jobs, Bin::T2).unwrap_or_default();
-    let k2 = job_edges(&args.jobs, Bin::K2).unwrap_or_default();
-    let p2 = job_edges(&args.jobs, Bin::P2).unwrap_or_default();
-    let hel = job_edges(&args.jobs, Bin::Helicoid).unwrap_or_default();
-    let catn = job_edges(&args.jobs, Bin::Catenoid).unwrap_or_default();
     let hyp = job_edges(&args.jobs, Bin::Hyperboloid).unwrap_or_default();
 
     let mut gpu = init_gpu(args.width, args.height)?;
@@ -597,13 +712,19 @@ fn run_caterpillar(args: Args) -> Result<()> {
         ..VisualState::default()
     };
 
-    let frames = args.frames.max(6);
-    let beat_len = (frames / 6).max(1);
-    let mut motes = seed_motes(&cat);
-    let mut last_theta = 0.0f32;
+    let frames = args.frames.max(1);
+    let cage = if hyp.is_empty() {
+        hyperboloid_edges(32)
+    } else {
+        hyp
+    };
+
+    let mut motes: Vec<Mote> = Vec::new();
+    let mut motes_seeded = false;
     let mut family = 0usize;
-    let mut cage_t = -1.0f32;
-    let mut cage_dir = 1.0f32;
+    let mut frozen_mid: Option<(Mat4, f32)> = None;
+    let mut frozen_pent = 0.02f32;
+    let mut frozen_hex = 0.02f32;
 
     let capture_dir = args.capture.as_deref();
     if let Some(dir) = capture_dir {
@@ -611,122 +732,97 @@ fn run_caterpillar(args: Args) -> Result<()> {
     }
 
     for i in 0..frames {
-        let beat_i = (i / beat_len).min(5);
-        let local = i - beat_i * beat_len;
-        let frac = local as f32 / beat_len as f32;
-        let time = i as f32 * 0.016;
-        vis.pulse = 0.2 + 0.25 * (time * 1.1).sin().abs();
-        vis.zener = 2.4 + 0.15 * (time * 0.7).sin();
+        let (beat_i, frac, _tau) = sheet(i, frames);
+        let time = i as f32 / 24.0;
+        vis.pulse = 0.5 + 0.5 * time.sin();
+        vis.zener = 2.4;
 
-        let (beat_name, theta, hex_a, show_mid, show_motes, freeze) = match beat_i {
-            0 => ("GENERATORS", 0.0, 0.0, false, false, false),
-            1 => ("CATALOG", 0.0, 0.0, false, false, false),
-            2 => (
-                "LENS",
-                frac * std::f32::consts::FRAC_PI_2,
-                0.0,
-                true,
-                false,
-                false,
-            ),
-            3 => ("CAGE", std::f32::consts::FRAC_PI_2, 0.0, true, false, false),
-            4 => (
-                "LIFE",
-                frac * std::f32::consts::FRAC_PI_2,
-                POLY_ALPHA,
-                true,
-                true,
-                false,
-            ),
-            _ => (
-                "REFUSE",
-                std::f32::consts::FRAC_PI_2,
-                POLY_ALPHA,
-                true,
-                true,
-                true,
-            ),
+        let beat_name = match beat_i {
+            0 => "GENERATORS",
+            1 => "CATALOG",
+            2 => "LENS",
+            3 => "CAGE",
+            4 => "LIFE",
+            _ => "REFUSE",
         };
 
+        let freeze = beat_i == 5;
+        let theta = match beat_i {
+            2 => theta_of(frac),
+            0 | 1 => 0.0,
+            _ => theta_of(1.0),
+        };
+
+        let pent_a;
+        let hex_a;
         let mut verts: Vec<LineVert> = Vec::new();
-        match beat_i {
-            0 => {
-                let nshow = 1 + (frac * 4.0).floor() as usize;
-                if nshow >= 1 {
+        let mut mid: Option<(Mat4, f32)> = None;
+        let mut show_motes = false;
+
+        if freeze {
+            pent_a = frozen_pent;
+            hex_a = frozen_hex;
+            mid = frozen_mid;
+            stamp_hubs(&mut renderer, &cat, pent_a, hex_a, mid);
+        } else {
+            match beat_i {
+                0 => {
+                    pent_a = 0.02;
+                    hex_a = 0.02;
                     verts.extend(edges_to_verts(&s2, Bin::S2.rgb()));
                 }
-                if nshow >= 2 {
-                    verts.extend(edges_to_verts(&t2, Bin::T2.rgb()));
+                1 => {
+                    pent_a = 0.02 + 0.98 * frac;
+                    hex_a = POLY_ALPHA;
+                    verts.extend(catalog_to_verts(&cat.segs, pent_a));
                 }
-                if nshow >= 3 {
-                    verts.extend(edges_to_verts(&k2, Bin::K2.rgb()));
+                2 => {
+                    pent_a = 1.0;
+                    hex_a = POLY_ALPHA;
+                    verts.extend(catalog_to_verts(&cat.segs, 1.0));
+                    verts.extend(associate_line_verts(theta, 48));
+                    mid = Some(midplane_orb(theta));
                 }
-                if nshow >= 4 {
-                    verts.extend(edges_to_verts(&p2, Bin::P2.rgb()));
+                3 => {
+                    pent_a = 1.0;
+                    hex_a = POLY_ALPHA;
+                    verts.extend(catalog_to_verts(&cat.segs, 1.0));
+                    verts.extend(edges_to_verts(&cage, GOLD));
+                    let s = (frac * 2.0 - 1.0).clamp(-1.0, 1.0);
+                    if frac > 0.5 {
+                        family = 1;
+                    }
+                    let p = hyperboloid_point(family, 0.4, s);
+                    let m = Mat4::from_translation(p) * Mat4::from_scale(Vec3::splat(0.06));
+                    mid = Some((m, 0.9));
+                }
+                _ => {
+                    pent_a = 1.0;
+                    hex_a = POLY_ALPHA;
+                    verts.extend(catalog_to_verts(&cat.segs, 1.0));
+                    let lines = associate_polylines(theta, 48);
+                    verts.extend(associate_line_verts(theta, 48));
+                    mid = Some(midplane_orb(theta));
+                    show_motes = true;
+                    if !motes_seeded {
+                        motes = seed_motes(&lines, &cat);
+                        motes_seeded = true;
+                    }
+                    advect(&mut motes, &lines, 1.0 / 24.0, &cat);
                 }
             }
-            1 => {
-                verts.extend(edges_to_verts(&s2, Bin::S2.rgb()));
-                verts.extend(catalog_to_verts(&cat.segs));
-            }
-            2 => {
-                verts.extend(edges_to_verts(&hel, Bin::Helicoid.rgb()));
-                verts.extend(edges_to_verts(&catn, Bin::Catenoid.rgb()));
-            }
-            3 => {
-                verts.extend(edges_to_verts(&hyp, Bin::Hyperboloid.rgb()));
-                verts.extend(catalog_to_verts(&cat.segs));
-            }
-            _ => {
-                verts.extend(catalog_to_verts(&cat.segs));
-                verts.extend(edges_to_verts(&hel, Bin::Helicoid.rgb()));
-                verts.extend(edges_to_verts(&catn, Bin::Catenoid.rgb()));
-            }
-        }
-        renderer.update_line_verts(&gpu, &verts);
 
-        let dtheta = theta - last_theta;
-        last_theta = theta;
-        let dp = d_associate(U_STAR, V_STAR, theta);
-        let mid_a = if show_mid {
-            (dp.length() * 2.0 + 0.15).clamp(0.02, 1.0)
-        } else {
-            0.0
-        };
-        let mid = if show_mid {
-            Some((associate(U_STAR, V_STAR, theta), mid_a))
-        } else {
-            None
-        };
-
-        if beat_i == 3 {
-            cage_t += cage_dir * 0.08;
-            if cage_t.abs() > 1.15 {
-                cage_dir *= -1.0;
-                family = 1 - family;
-            }
-            let p = hyperboloid_point(family, 0.4, cage_t);
-            renderer.draw_geodesic_orb_alpha(
-                Mat4::from_translation(p) * Mat4::from_scale(Vec3::splat(0.05)),
-                GOLD,
-                0.9,
-            );
-        }
-
-        if beat_i >= 1 {
-            stamp_hubs(&mut renderer, &cat, hex_a, mid);
-            upload_breath(&mut renderer, &gpu, &cat)?;
-        } else {
-            draw_stub_hubs(&mut renderer);
-        }
-
-        if show_motes {
-            if !freeze {
-                step_motes(&mut motes, &cat, theta, dtheta);
-            }
-            renderer.write_particles(&gpu, &gpu_motes(&motes))?;
-        } else {
-            renderer.write_particles(&gpu, &[])?;
+            renderer.update_line_verts(&gpu, &verts);
+            stamp_hubs(&mut renderer, &cat, pent_a, hex_a, mid);
+            let particles = if show_motes {
+                gpu_motes(&motes)
+            } else {
+                Vec::new()
+            };
+            renderer.write_particles(&gpu, &particles)?;
+            frozen_mid = mid;
+            frozen_pent = pent_a;
+            frozen_hex = hex_a;
         }
 
         renderer.write_hud(&gpu, &plate_hud("CATALOG", occ.as_ref(), beat_name, theta))?;

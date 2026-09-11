@@ -99,6 +99,9 @@ Four named flags → `{s2,t2,k2,p2}.bgra` under `--capture`. `--helicoid`/`--cat
 `--larva PATH` is an alias for `--field`. PATH may be the recipe dir or `net.json`.
 `--width` / `--height` default 1920×1080. Homology / hyperboloid parcels are optional;
 missing bins stay empty instead of failing closed.
+
+`--frames 240` is 10 s at 24 fps (lens ≈ 2.5 s of associate-family rebuild).
+48 frames is two seconds; the same loop, not a different film.
     ./scripts/assemble_caterpillar.sh --out output/mp4/caterpillar_topology.mp4 \
       output/mp4/caterpillar_topology
 
