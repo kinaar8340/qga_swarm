@@ -2154,6 +2154,8 @@ fn run_hang(args: Args) -> Result<()> {
 
 const TAPER_S: [f32; 7] = [0.00, 0.08, 0.20, 0.45, 0.75, 0.92, 1.00];
 const TAPER_R: [f32; 7] = [0.35, 0.55, 0.70, 1.00, 0.85, 0.55, 0.30];
+/// L5 length in body units. r_mid = 1, so L ≈ 6 r_mid. Sausage, not a ball.
+const BODY_LEN: f32 = 6.0;
 const POLYXENES_RGBA: [[f32; 4]; 4] = [
     [0.08, 0.08, 0.08, 1.00],
     [1.00, 0.45, 0.12, 1.00],
@@ -2172,9 +2174,9 @@ fn taper_r(s: f32) -> f32 {
     TAPER_R[6]
 }
 
-fn tube_point(s: f32, phi_deg: f32, height: f32) -> Vec3 {
+fn tube_point(s: f32, phi_deg: f32, _height: f32) -> Vec3 {
     let s = s.clamp(0.0, 1.0);
-    let z = 0.5 * height - s * height;
+    let z = 0.5 * BODY_LEN - s * BODY_LEN;
     let r = taper_r(s);
     let p = phi_deg.to_radians();
     Vec3::new(r * p.cos(), r * p.sin(), z)
@@ -2185,14 +2187,14 @@ fn tube_normal(_s: f32, phi_deg: f32) -> Vec3 {
     Vec3::new(p.cos(), p.sin(), 0.0)
 }
 
-fn tube_rings(n_seg: u32, n_phi: u32, height: f32) -> Vec<Vec<Vec3>> {
+fn tube_rings(n_seg: u32, n_phi: u32, _height: f32) -> Vec<Vec<Vec3>> {
     let n_seg = n_seg.max(1);
     let n_phi = n_phi.max(8);
     let n_rings = n_seg + 1;
     let mut rings = vec![vec![Vec3::ZERO; n_phi as usize]; n_rings as usize];
     for i in 0..n_rings {
         let s = i as f32 / 13.0;
-        let z = 0.5 * height - s * height;
+        let z = 0.5 * BODY_LEN - s * BODY_LEN;
         let r = taper_r(s);
         for j in 0..n_phi {
             let phi = std::f32::consts::TAU * j as f32 / n_phi as f32;
@@ -2202,17 +2204,16 @@ fn tube_rings(n_seg: u32, n_phi: u32, height: f32) -> Vec<Vec<Vec3>> {
     rings
 }
 
-fn tube_paint_bits(s: f32, phi_deg: f32, n_seg: u32, atlas: Option<&Chaetotaxy>) -> usize {
+fn tube_paint_bits(
+    s: f32,
+    phi_deg: f32,
+    n_seg: u32,
+    atlas: Option<&Chaetotaxy>,
+    allow_belt: bool,
+) -> usize {
     let phi = ((phi_deg % 360.0) + 360.0) % 360.0;
     let phi_abs = if phi > 180.0 { 360.0 - phi } else { phi };
     let seg = (s * 13.0).floor().clamp(0.0, 12.0) as u32;
-    let near_joint = {
-        let mut d = 1.0f32;
-        for k in 1..n_seg {
-            d = d.min((s - k as f32 / 13.0).abs());
-        }
-        d < 0.028
-    };
     let ventral = phi_abs > 145.0 && phi_abs < 178.0;
     let proleg_seg = matches!(seg, 5 | 6 | 7 | 8 | 12);
     if ventral && proleg_seg && n_seg > seg {
@@ -2227,13 +2228,19 @@ fn tube_paint_bits(s: f32, phi_deg: f32, n_seg: u32, atlas: Option<&Chaetotaxy>)
                 continue;
             }
             let dphi = shortest_dphi(phi_abs, site.phi_deg.abs()).abs();
-            if (site.s - s).abs() < 0.055 && dphi < 16.0 {
+            if (site.s - s).abs() < 0.028 && dphi < 9.0 {
                 return 1;
             }
         }
     }
-    if near_joint {
-        return 0;
+    if allow_belt {
+        let mut d = 1.0f32;
+        for k in 1..n_seg {
+            d = d.min((s - k as f32 / 13.0).abs());
+        }
+        if d < 0.018 {
+            return 0;
+        }
     }
     2
 }
@@ -2262,10 +2269,15 @@ fn tube_verts(
     };
     for (i, ring) in rings.iter().enumerate() {
         let s = i as f32 / 13.0;
+        let joint = i > 0 && (i as u32) < n_seg;
         for j in 0..n_phi {
             let j2 = ((j + 1) % n_phi) as usize;
             let phi = 360.0 * j as f32 / n_phi as f32;
-            let bits = tube_paint_bits(s, phi, n_seg, atlas);
+            let bits = if joint {
+                0
+            } else {
+                tube_paint_bits(s, phi, n_seg, atlas, false)
+            };
             push(&mut out, ring[j as usize], ring[j2], bits);
         }
     }
@@ -2273,7 +2285,7 @@ fn tube_verts(
         let s = (i as f32 + 0.5) / 13.0;
         for j in 0..n_phi {
             let phi = 360.0 * j as f32 / n_phi as f32;
-            let bits = tube_paint_bits(s, phi, n_seg, atlas);
+            let bits = tube_paint_bits(s, phi, n_seg, atlas, false);
             push(
                 &mut out,
                 rings[i as usize][j as usize],
@@ -2288,7 +2300,7 @@ fn tube_verts(
 fn head_cap(height: f32) -> Vec<[Vec3; 2]> {
     let n = 10u32;
     let s = 0.0;
-    let pole = Vec3::new(0.0, 0.0, 0.5 * height + 0.10);
+    let pole = Vec3::new(0.0, 0.0, 0.5 * BODY_LEN + 0.12);
     let mut segs = Vec::new();
     let mut ring = Vec::new();
     for j in 0..n {
@@ -2332,7 +2344,7 @@ fn body_hud(beat: &str, instar: &str, painted: bool) -> Vec<HudVert> {
     hud_quad(&mut v, -0.96, 0.50, -0.38, 0.94, PANEL);
     hud_text(&mut v, -0.94, 0.90, 0.016, "POLYXENES", GOLD_A);
     hud_text(&mut v, -0.94, 0.84, 0.014, "MODEL", INK);
-    hud_text(&mut v, -0.94, 0.78, 0.014, "TAPERED TUBE", INK);
+    hud_text(&mut v, -0.94, 0.78, 0.014, "SAUSAGE L=6R", INK);
     hud_text(
         &mut v,
         -0.94,
@@ -2347,6 +2359,10 @@ fn body_hud(beat: &str, instar: &str, painted: bool) -> Vec<HudVert> {
     );
     hud_text(&mut v, -0.94, 0.66, 0.014, "OPEN", GOLD_A);
     hud_text(&mut v, -0.94, 0.60, 0.012, "NOT CHI=2", INK);
+    if painted {
+        hud_text(&mut v, -0.94, 0.54, 0.011, "BELTS AT JOINTS", INK);
+        hud_text(&mut v, -0.94, 0.48, 0.011, "SPOTS D/SD", INK);
+    }
     hud_quad(&mut v, 0.38, 0.50, 0.96, 0.94, PANEL);
     hud_text(&mut v, 0.40, 0.90, 0.016, "REFUSE", GOLD_A);
     hud_text(&mut v, 0.40, 0.84, 0.014, "HYPOTHESIS / MODEL", INK);
@@ -2372,9 +2388,9 @@ fn run_body(args: Args) -> Result<()> {
 
     let mut gpu = init_gpu(args.width, args.height)?;
     let mut renderer = Renderer::new(&gpu)?;
-    let mut camera = Camera::orbit(Vec3::ZERO, 4.4);
-    camera.yaw = 0.85;
-    camera.pitch = 0.22;
+    let mut camera = Camera::orbit(Vec3::ZERO, 8.4);
+    camera.yaw = 1.12;
+    camera.pitch = 0.16;
     camera.aspect = args.width as f32 / args.height as f32;
     let mut vis = VisualState {
         glow: 0.35,
