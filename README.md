@@ -3,8 +3,8 @@
 Assemble homology wires and catalog dumps into one captured MP4.
 Last mile is qga_gpu on bud. Workers emit files.
 
-Playground tracks: 6 (GPU parent / CPU workers) + 0 (bin/fleet).
-Not Track 3 until workers have auth. Not Track 9.
+Playground tracks: 6 (GPU parent / CPU workers) + 0 (bin/fleet) + 3 (headless grok; workers have auth).
+Not Track 9.
 
 Life on the helicoid, catalog on the catenoid. The catalog cannot
 prove it captured the occupant. This repo does not prove it either.
@@ -79,6 +79,10 @@ Four named flags → `{s2,t2,k2,p2}.bgra` under `--capture`. `--helicoid`/`--cat
 
     ./scripts/fleet_pack.sh
 
-Remote homology MAP is unchanged (bud2/6 s2, bud3/7 t2, bud4/8 k2, bud5/9 p2). Remote H/C: bud6 `helicoid_edges.bin`, bud7 `catenoid_edges.bin`. Theta stays `--local`. Never `bin/fleet grok`.
+Remote homology MAP is unchanged (bud2/6 s2, bud3/7 t2, bud4/8 k2, bud5/9 p2). Remote H/C: bud6 `helicoid_edges.bin`, bud7 `catenoid_edges.bin`. Theta stays `--local`. `fleet_pack.sh` never calls grok.
+
+    ~/Playground/bin/fleet grok --hosts bud2 --no-subagents -p 'reply with only the hostname'
+
+Track 3 is `bin/fleet grok` (facts/status). Last mile stays on bud.
 
 θ family is Model; conjugate helicoid is not `helicoid.py`. Catalog stems are `s2 t2 k2 p2 helicoid catenoid theta0 theta25 theta50` (fail-closed). HUD is T=3 catalog + refuse cards (`write_hud`), not ocean particles and not occupant proof. Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.

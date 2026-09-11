@@ -9,7 +9,7 @@ Not a second engine. Not Animation A. Not a Renderer trait.
 - Workers: bud2–bud9. CPU parcels only. No wgpu, no CUDA, no qga_gpu binary.
 - Driver: ~/Playground/bin/fleet (model B). Do not spawn local subagents
   that SSH. Do not mix model A with fleet jobs.
-Playground tracks: 6 + 0. Not 3 (no worker auth). Not 9.
+Playground tracks: 6 + 0 + 3 (worker auth present). Not 9.
 
 ## Pins (do not float main)
 
@@ -69,7 +69,8 @@ Binaries print claims=Software fact.
 Grok Build must start in plan mode for every non-trivial change.
 Write tools stay off until the human types APPROVE (or presses `a`
 in the plan viewer). Headless `grok -p` on bud is for facts and
-status, not for editing this tree. Workers are not signed in;
-do not `bin/fleet grok` until that changes.
+status, not for editing this tree. Workers are signed in.
+`bin/fleet grok` is Track 3 (facts/status). Do not mix grok into
+`fleet_pack.sh`. Last mile stays on bud.
 
 See BUILD.md.
