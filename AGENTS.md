@@ -76,6 +76,9 @@ Workers never open a GpuContext.
 - CPU motes along rulings: Model. Display only. Not the occupant.
 - S² T² K² P² prologue: homology legend, not a remesh onto Goldberg faces.
 - Goldberg nets in lepidopteran development: not a claim. Recipe ≠ morphogenesis.
+- Instar growth is a ring schedule on an open cylinder. Paint wraps a frozen L5 net.
+  Do not grow a textured mesh. Species rgb_preview (black/gold/white/magenta) is a
+  witness of the same four bins, not a fifth hue.
 
 Binaries print claims=Software fact.
 

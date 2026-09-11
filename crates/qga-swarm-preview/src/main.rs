@@ -8,9 +8,10 @@ use qga_gpu::{
     LineVert, Renderer, VisualState,
 };
 use qga_swarm_convert::{
-    catalog_line_verts, face_centroids, glam_edges, hexavalent_hubs, load_net_json, load_occupancy,
-    load_qga_pixel_field, load_qgae, nearest_section, pentavalent_hubs, CatalogSeg, Hub,
-    OccupancyCard, PixelFace, SECTION_HUE,
+    catalog_line_verts, face_centroids, glam_edges, hexavalent_hubs,
+    load_net_json, load_occupancy, load_qga_pixel_field, load_qgae, load_setal_sites,
+    nearest_section, pentavalent_hubs, CatalogSeg, Hub, OccupancyCard, PixelFace, SetalSite,
+    SECTION_HUE, SECTION_RGBA, SPECIES_RGBA,
 };
 use std::path::{Path, PathBuf};
 
@@ -115,6 +116,7 @@ fn parse_args() -> Result<Args> {
     let mut headless = false;
     let mut beat: Option<String> = None;
     let mut field: Option<PathBuf> = None;
+    let mut larva: Option<PathBuf> = None;
     let mut compare: Option<PathBuf> = None;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -125,12 +127,8 @@ fn parse_args() -> Result<Args> {
             "--height" => height = it.next().context("--height N")?.parse()?,
             "--capture" => capture = Some(PathBuf::from(it.next().context("--capture DIR")?)),
             "--beat" => beat = Some(it.next().context("--beat NAME")?),
-            "--field" | "--larva" => {
-                if field.is_some() {
-                    bail!("do not mix --field and --larva");
-                }
-                field = Some(PathBuf::from(it.next().context("--field/--larva PATH")?));
-            }
+            "--field" => field = Some(PathBuf::from(it.next().context("--field PATH")?)),
+            "--larva" => larva = Some(PathBuf::from(it.next().context("--larva PATH")?)),
             "--compare" => compare = Some(PathBuf::from(it.next().context("--compare PATH")?)),
             "--s2" => named.push(Job {
                 path: PathBuf::from(it.next().context("--s2 PATH")?),
@@ -185,10 +183,24 @@ fn parse_args() -> Result<Args> {
     let beat = match beat.as_deref() {
         None => None,
         Some("caterpillar") => Some(Beat::Caterpillar),
-        Some(other) => bail!("unknown --beat {other}; expected caterpillar"),
+        Some("caterpillar-grow") => Some(Beat::CaterpillarGrow),
+        Some("caterpillar-skin") => Some(Beat::CaterpillarSkin),
+        Some(other) => bail!(
+            "unknown --beat {other}; expected caterpillar, caterpillar-grow, or caterpillar-skin"
+        ),
     };
+    if larva.is_none() {
+        larva = field.clone();
+    }
     if beat.is_none() && jobs.is_empty() {
         bail!("need --lines FILE or --s2/--t2/--k2/--p2/--helicoid/--catenoid/--theta");
+    }
+    if matches!(
+        beat,
+        Some(Beat::CaterpillarGrow | Beat::CaterpillarSkin | Beat::Caterpillar)
+    ) && larva.is_none()
+    {
+        bail!("--beat needs --larva PATH or --field PATH");
     }
     jobs.sort_by_key(|j| match j.bin {
         Bin::S2 => 0,
@@ -208,6 +220,7 @@ fn parse_args() -> Result<Args> {
         capture,
         beat,
         field,
+        larva,
         compare,
     })
 }
@@ -220,6 +233,7 @@ struct Args {
     capture: Option<PathBuf>,
     beat: Option<Beat>,
     field: Option<PathBuf>,
+    larva: Option<PathBuf>,
     compare: Option<PathBuf>,
 }
 
@@ -254,14 +268,32 @@ fn resolve_catalog_dir(raw: &Path) -> Result<PathBuf> {
         } else {
             t.clone()
         };
-        if dir.join("net.json").is_file() && dir.join("qga_pixel_field.bin").is_file() {
+        if dir.join("net.json").is_file() {
             return Ok(dir);
         }
     }
     bail!(
-        "catalog dump not found at {} (need net.json + qga_pixel_field.bin)",
+        "catalog dump not found at {} (need net.json)",
         raw.display()
     )
+}
+
+fn resolve_pixel_bin(field: Option<&Path>, dir: &Path) -> Option<PathBuf> {
+    let mut tries = Vec::new();
+    if let Some(p) = field {
+        tries.push(p.to_path_buf());
+        if p.is_dir() {
+            tries.push(p.join("qga_pixel_field.bin"));
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            let s = p.to_string_lossy().replace('\\', "/");
+            if let Some(rest) = s.strip_prefix("../shellscan/") {
+                tries.push(PathBuf::from(home).join("Projects/shellscan").join(rest));
+            }
+        }
+    }
+    tries.push(dir.join("qga_pixel_field.bin"));
+    tries.into_iter().find(|p| p.is_file())
 }
 
 fn init_gpu(width: u32, height: u32) -> Result<GpuContext> {
@@ -271,6 +303,8 @@ fn init_gpu(width: u32, height: u32) -> Result<GpuContext> {
 #[derive(Clone, Copy)]
 enum Beat {
     Caterpillar,
+    CaterpillarGrow,
+    CaterpillarSkin,
 }
 
 fn theta_capture_stem(path: &Path) -> String {
@@ -349,7 +383,7 @@ fn draw_stub_hubs(renderer: &mut Renderer) {
 }
 
 fn catalog_and_refuse() -> Vec<HudVert> {
-    plate_hud("CATALOG", None, "GENERATORS", 0.0)
+    plate_hud("CATALOG", None, "GENERATORS", 0.0, false)
 }
 
 fn plate_hud(
@@ -357,6 +391,7 @@ fn plate_hud(
     occ: Option<&OccupancyCard>,
     beat: &str,
     theta: f32,
+    open: bool,
 ) -> Vec<HudVert> {
     const PANEL: [f32; 4] = [0.02, 0.04, 0.08, 0.72];
     const INK: [f32; 4] = [0.92, 0.95, 1.00, 0.92];
@@ -392,7 +427,11 @@ fn plate_hud(
     hud_text(&mut v, 0.02, -0.70, 0.012, "LIFE", INK);
 
     hud_text(&mut v, -0.20, 0.46, 0.014, beat, GOLD_A);
-    let tline = format!("THETA {:.2}  CHI=2", theta);
+    let tline = if open {
+        format!("THETA {:.2}  OPEN", theta)
+    } else {
+        format!("THETA {:.2}  CHI=2", theta)
+    };
     hud_text(&mut v, -0.20, 0.40, 0.012, &tline, INK);
     v
 }
@@ -687,8 +726,9 @@ fn run_stills(args: Args) -> Result<()> {
 
 fn run_caterpillar(args: Args) -> Result<()> {
     let field_raw = args
-        .field
+        .larva
         .as_deref()
+        .or(args.field.as_deref())
         .context("--beat caterpillar needs --field DIR or --larva PATH")?;
     let field = resolve_catalog_dir(field_raw)?;
     let cat = load_catalog(&field)?;
@@ -825,7 +865,10 @@ fn run_caterpillar(args: Args) -> Result<()> {
             frozen_hex = hex_a;
         }
 
-        renderer.write_hud(&gpu, &plate_hud("CATALOG", occ.as_ref(), beat_name, theta))?;
+        renderer.write_hud(
+            &gpu,
+            &plate_hud("CATALOG", occ.as_ref(), beat_name, theta, false),
+        )?;
 
         let grab = capture_dir.is_some();
         if let Some(frame) = renderer.render(&mut gpu, &camera, &vis, time, grab)? {
@@ -843,11 +886,408 @@ fn run_caterpillar(args: Args) -> Result<()> {
     Ok(())
 }
 
+const BONE: Vec3 = Vec3::new(0.72, 0.72, 0.68);
+
+/// rings (segments), length along s, twist radians at end of instar.
+const INSTAR: [(u32, f32, f32); 5] = [
+    (3, 0.35, 0.0),
+    (5, 0.50, 0.0),
+    (8, 0.70, 0.0),
+    (11, 0.88, 0.25),
+    (13, 1.00, 0.0),
+];
+
+fn grow_sheet(i: u32, frames: u32) -> (u8, f32, bool) {
+    let n = frames.max(1);
+    let x = i as f32 * 240.0 / n as f32;
+    let (stage, start, len) = if x < 40.0 {
+        (0u8, 0.0, 40.0)
+    } else if x < 80.0 {
+        (1, 40.0, 40.0)
+    } else if x < 120.0 {
+        (2, 80.0, 40.0)
+    } else if x < 160.0 {
+        (3, 120.0, 40.0)
+    } else if x < 200.0 {
+        (4, 160.0, 40.0)
+    } else {
+        (5, 200.0, 40.0)
+    };
+    let local = x - start;
+    let frac = (local / len).clamp(0.0, 1.0);
+    let flash = stage >= 1 && stage <= 4 && local < 2.0;
+    (stage, frac, flash)
+}
+
+fn instar_cylinder(
+    n_seg: u32,
+    n_phi: u32,
+    length: f32,
+    twist: f32,
+    radius: f32,
+    height: f32,
+) -> Vec<[Vec3; 2]> {
+    let n_seg = n_seg.max(1);
+    let n_phi = n_phi.max(8);
+    let n_rings = n_seg + 1;
+    let mut rings = vec![vec![Vec3::ZERO; n_phi as usize]; n_rings as usize];
+    for i in 0..n_rings {
+        let u = i as f32 / n_seg as f32;
+        let z = 0.5 * height - length * height * u;
+        for j in 0..n_phi {
+            let phi = std::f32::consts::TAU * j as f32 / n_phi as f32;
+            let psi = phi + twist * u;
+            rings[i as usize][j as usize] = Vec3::new(radius * psi.cos(), radius * psi.sin(), z);
+        }
+    }
+    let mut segs = Vec::new();
+    for i in 0..n_rings {
+        for j in 0..n_phi {
+            let j2 = (j + 1) % n_phi;
+            segs.push([
+                rings[i as usize][j as usize],
+                rings[i as usize][j2 as usize],
+            ]);
+        }
+    }
+    for i in 0..n_seg {
+        for j in 0..n_phi {
+            segs.push([
+                rings[i as usize][j as usize],
+                rings[(i + 1) as usize][j as usize],
+            ]);
+        }
+    }
+    segs
+}
+
+fn site_pos(
+    site: &SetalSite,
+    n_seg: u32,
+    length: f32,
+    twist: f32,
+    radius: f32,
+    height: f32,
+    mirror: bool,
+) -> Vec3 {
+    let u = (site.segment_index as f32 + 0.5) / n_seg.max(1) as f32;
+    let z = 0.5 * height - length * height * u;
+    let mut phi = site.phi_deg.to_radians();
+    if mirror {
+        phi = -phi;
+    }
+    let psi = phi + twist * u;
+    let r = radius * 1.06;
+    Vec3::new(r * psi.cos(), r * psi.sin(), z)
+}
+
+fn stamp_setal(
+    renderer: &mut Renderer,
+    sites: &[SetalSite],
+    n_seg: u32,
+    length: f32,
+    twist: f32,
+    radius: f32,
+    height: f32,
+    tentacles_only: bool,
+    amp_scale: f32,
+    alpha: f32,
+) {
+    let a = alpha.clamp(0.02, 1.0);
+    for site in sites {
+        if site.segment_index < 0 || site.segment_index as u32 >= n_seg {
+            continue;
+        }
+        if tentacles_only && !site.tentacle {
+            continue;
+        }
+        let col = Vec3::new(
+            SECTION_RGBA[site.section][0],
+            SECTION_RGBA[site.section][1],
+            SECTION_RGBA[site.section][2],
+        );
+        let scale = if site.tentacle {
+            0.045 + 0.04 * site.amplitude * amp_scale
+        } else {
+            0.018 + 0.012 * site.amplitude * amp_scale
+        };
+        for mirror in [false, true] {
+            let p = site_pos(site, n_seg, length, twist, radius, height, mirror);
+            let m = Mat4::from_translation(p) * Mat4::from_scale(Vec3::splat(scale));
+            renderer.draw_geodesic_orb_alpha(m, col, a);
+        }
+    }
+}
+
+fn grow_hud(instar: &str, rings: u32, flash: bool) -> Vec<HudVert> {
+    let beat = if flash {
+        format!("{instar} MOLT")
+    } else {
+        format!("{instar} RINGS {rings}")
+    };
+    plate_hud("SKELETON", None, &beat, 0.0, true)
+}
+
+fn run_grow(args: Args) -> Result<()> {
+    let raw = args
+        .larva
+        .as_deref()
+        .or(args.field.as_deref())
+        .context("--beat caterpillar-grow needs --larva")?;
+    let dir = resolve_catalog_dir(raw)?;
+    let net = load_net_json(&dir.join("net.json")).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let sites = load_setal_sites(&dir).unwrap_or_default();
+    let n_phi = if net.n_phi == 0 { 36 } else { net.n_phi };
+    let radius = if net.radius <= 0.0 { 1.0 } else { net.radius };
+    let height = if net.height <= 0.0 { 2.0 } else { net.height };
+
+    let mut gpu = init_gpu(args.width, args.height)?;
+    let mut renderer = Renderer::new(&gpu)?;
+    let mut camera = Camera::orbit(Vec3::ZERO, 4.6);
+    camera.aspect = args.width as f32 / args.height as f32;
+    let mut vis = VisualState {
+        glow: 0.4,
+        pulse: 0.2,
+        tube_radius: 0.02,
+        zener: 2.4,
+        ..VisualState::default()
+    };
+
+    let frames = args.frames.max(1);
+    let capture_dir = args.capture.as_deref();
+    if let Some(d) = capture_dir {
+        std::fs::create_dir_all(d)?;
+    }
+
+    let mut frozen_n = 3u32;
+    let mut frozen_len = 0.35f32;
+    let mut frozen_twist = 0.0f32;
+    let mut frozen_amp = 0.55f32;
+    let mut frozen_tent_only = true;
+
+    for i in 0..frames {
+        let (stage, frac, flash) = grow_sheet(i, frames);
+        let time = i as f32 / 24.0;
+        vis.pulse = 0.5 + 0.5 * time.sin();
+
+        let refuse = stage == 5;
+        let (n_seg, length, twist, tent_only, amp, name, hub_alpha) = if refuse {
+            (
+                frozen_n,
+                frozen_len,
+                frozen_twist,
+                frozen_tent_only,
+                frozen_amp,
+                "L5 HOLD",
+                1.0f32,
+            )
+        } else {
+            let (rings, len, tw_end) = INSTAR[stage as usize];
+            let twist = if stage == 3 { tw_end * frac } else { tw_end };
+            let tent_only = stage <= 1;
+            let amp = match stage {
+                0 => 0.55,
+                1 => 0.7,
+                2 => 0.85,
+                3 => 0.7 + 0.3 * frac,
+                _ => 1.0,
+            };
+            let name = match stage {
+                0 => "L1",
+                1 => "L2",
+                2 => "L3",
+                3 => "L4",
+                _ => "L5",
+            };
+            let hub_alpha = if stage == 0 { 0.02 + 0.98 * frac } else { 1.0 };
+            (rings, len, twist, tent_only, amp, name, hub_alpha)
+        };
+
+        let segs = instar_cylinder(n_seg, n_phi, length, twist, radius, height);
+        if !refuse {
+            renderer.update_line_verts(&gpu, &edges_to_verts(&segs, BONE));
+            frozen_n = n_seg;
+            frozen_len = length;
+            frozen_twist = twist;
+            frozen_amp = amp;
+            frozen_tent_only = tent_only;
+        }
+        if !flash {
+            stamp_setal(
+                &mut renderer,
+                &sites,
+                n_seg,
+                length,
+                twist,
+                radius,
+                height,
+                tent_only,
+                amp,
+                hub_alpha,
+            );
+        }
+        renderer.write_particles(&gpu, &[])?;
+        renderer.write_hud(
+            &gpu,
+            &grow_hud(if refuse { "REFUSE" } else { name }, n_seg, flash),
+        )?;
+        let grab = capture_dir.is_some();
+        if let Some(frame) = renderer.render(&mut gpu, &camera, &vis, time, grab)? {
+            if let Some(d) = capture_dir {
+                write_bgra(
+                    d,
+                    &format!("frame_{i:04}"),
+                    &frame.bgra,
+                    frame.width,
+                    frame.height,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn mix4(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    let t = t.clamp(0.0, 1.0);
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+        1.0,
+    ]
+}
+
+fn run_skin(args: Args) -> Result<()> {
+    let raw = args
+        .larva
+        .as_deref()
+        .or(args.field.as_deref())
+        .context("--beat caterpillar-skin needs --larva")?;
+    let dir = resolve_catalog_dir(raw)?;
+    let net = load_net_json(&dir.join("net.json")).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let bin = resolve_pixel_bin(args.field.as_deref(), &dir)
+        .context("caterpillar-skin needs qga_pixel_field.bin")?;
+    let _field = load_qga_pixel_field(&bin).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let sites = load_setal_sites(&dir).unwrap_or_default();
+    let occ = match args.compare.as_deref() {
+        Some(p) => Some(load_occupancy(p).map_err(|e| anyhow::anyhow!("{e}"))?),
+        None => None,
+    };
+
+    let n_phi = if net.n_phi == 0 { 36 } else { net.n_phi };
+    let n_seg = if net.n_segments == 0 {
+        13
+    } else {
+        net.n_segments
+    };
+    let radius = if net.radius <= 0.0 { 1.0 } else { net.radius };
+    let height = if net.height <= 0.0 { 2.0 } else { net.height };
+
+    let mut gpu = init_gpu(args.width, args.height)?;
+    let mut renderer = Renderer::new(&gpu)?;
+    let mut camera = Camera::orbit(Vec3::ZERO, 4.6);
+    camera.aspect = args.width as f32 / args.height as f32;
+    let mut vis = VisualState {
+        glow: 0.4,
+        pulse: 0.2,
+        tube_radius: 0.02,
+        zener: 2.4,
+        ..VisualState::default()
+    };
+
+    let frames = args.frames.max(1);
+    let capture_dir = args.capture.as_deref();
+    if let Some(d) = capture_dir {
+        std::fs::create_dir_all(d)?;
+    }
+
+    let bone = [BONE.x, BONE.y, BONE.z, 1.0];
+    let rulings = instar_cylinder(n_seg, n_phi, 1.0, 0.0, radius, height);
+
+    for i in 0..frames {
+        let t = if frames <= 1 {
+            1.0
+        } else {
+            i as f32 / (frames - 1) as f32
+        };
+        let time = i as f32 / 24.0;
+        vis.pulse = 0.5 + 0.5 * time.sin();
+
+        let n_ring_edges = ((n_seg + 1) * n_phi) as usize;
+        let mut verts = Vec::new();
+        for (k, [a, b]) in rulings.iter().enumerate() {
+            let seg_i = if k < n_ring_edges {
+                (k as u32 / n_phi).min(n_seg.saturating_sub(1))
+            } else {
+                ((k - n_ring_edges) as u32 / n_phi).min(n_seg.saturating_sub(1))
+            };
+            let col = mix4(bone, SPECIES_RGBA[(seg_i % 3) as usize], t);
+            verts.push(LineVert {
+                pos: (*a).into(),
+                pad: 0.0,
+                color: col,
+            });
+            verts.push(LineVert {
+                pos: (*b).into(),
+                pad: 0.0,
+                color: col,
+            });
+        }
+        renderer.update_line_verts(&gpu, &verts);
+        stamp_setal(
+            &mut renderer,
+            &sites,
+            n_seg,
+            1.0,
+            0.0,
+            radius,
+            height,
+            false,
+            1.0,
+            1.0,
+        );
+        if t > 0.75 {
+            let n_ring_edges = ((n_seg + 1) * n_phi) as usize;
+            let mut motes = Vec::new();
+            for (k, [a, b]) in rulings.iter().skip(n_ring_edges).enumerate() {
+                if motes.len() >= MOTE_CAP {
+                    break;
+                }
+                let phase = (k as f32 * 0.17 + time * 0.35).rem_euclid(1.0);
+                let pos = *a + (*b - *a) * phase;
+                motes.push(GpuParticle::new(pos, *b - *a, 0.4).with_hue(SECTION_HUE[2]));
+            }
+            renderer.write_particles(&gpu, &motes)?;
+        } else {
+            renderer.write_particles(&gpu, &[])?;
+        }
+        renderer.write_hud(
+            &gpu,
+            &plate_hud("SKIN ON FROZEN NET", occ.as_ref(), "L5 WRAP", 0.0, true),
+        )?;
+        let grab = capture_dir.is_some();
+        if let Some(frame) = renderer.render(&mut gpu, &camera, &vis, time, grab)? {
+            if let Some(d) = capture_dir {
+                write_bgra(
+                    d,
+                    &format!("frame_{i:04}"),
+                    &frame.bgra,
+                    frame.width,
+                    frame.height,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     print_claim_banner("homology remesh / inner_cone film");
     let args = parse_args()?;
     match args.beat {
         Some(Beat::Caterpillar) => run_caterpillar(args),
+        Some(Beat::CaterpillarGrow) => run_grow(args),
+        Some(Beat::CaterpillarSkin) => run_skin(args),
         None => run_stills(args),
     }
 }

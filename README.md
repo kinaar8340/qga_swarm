@@ -102,6 +102,23 @@ missing bins stay empty instead of failing closed.
 
 `--frames 240` is 10 s at 24 fps (lens ≈ 2.5 s of associate-family rebuild).
 48 frames is two seconds; the same loop, not a different film.
+
+Skeleton then skin (two films, glued at L5 freeze). Paint does not grow.
+
+    cargo run -p qga-swarm-preview --release -- \
+      --beat caterpillar-grow --headless --frames 240 --width 1920 --height 1080 \
+      --larva "$HOME/Projects/shellscan/output/recipe/setal-plexippus-cylinder/net.json" \
+      --capture output/capture/caterpillar_grow
+    cargo run -p qga-swarm-preview --release -- \
+      --beat caterpillar-skin --headless --frames 72 --width 1920 --height 1080 \
+      --larva "$HOME/Projects/shellscan/output/recipe/setal-plexippus-cylinder/net.json" \
+      --field "$HOME/Projects/shellscan/output/recipe/setal-plexippus-cylinder/qga_pixel_field.bin" \
+      --capture output/capture/caterpillar_skin
+    ./scripts/assemble_copy.sh --out output/mp4/caterpillar_copy.mp4 \
+      output/capture/caterpillar_grow output/capture/caterpillar_skin
+
+`--beat caterpillar-grow` uploads new cylinder rings (3→13). No face hues.
+`--beat caterpillar-skin` fades species preview (black/gold/white) on the frozen L5 net.
     ./scripts/assemble_caterpillar.sh --out output/mp4/caterpillar_topology.mp4 \
       output/mp4/caterpillar_topology
 

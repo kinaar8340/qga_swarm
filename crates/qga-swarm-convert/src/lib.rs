@@ -20,6 +20,19 @@ pub const SECTION_RGBA: [[f32; 4]; 4] = [
 /// SPEC.md GpuParticle.pad hues.
 pub const SECTION_HUE: [f32; 4] = [0.55, 0.10, 0.30, 0.80];
 
+/// Species preview witness (monarch black / yellow / white / magenta).
+/// Same four bins as SECTION_RGBA. Not a fifth hue. Field dump still stores section.
+pub const SPECIES_RGBA: [[f32; 4]; 4] = [
+    [0.08, 0.08, 0.08, 1.00],
+    [1.00, 0.75, 0.20, 1.00],
+    [0.92, 0.92, 0.90, 1.00],
+    [1.00, 0.20, 0.80, 1.00],
+];
+
+pub const SEGMENTS: [&str; 13] = [
+    "T1", "T2", "T3", "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10",
+];
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Hub {
     pub pos: [f32; 3],
@@ -70,6 +83,22 @@ pub struct Net {
     pub t: i32,
     pub verts: Vec<[f32; 3]>,
     pub faces: Vec<Vec<u32>>,
+    pub n_phi: u32,
+    pub n_segments: u32,
+    pub twist: f32,
+    pub radius: f32,
+    pub height: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SetalSite {
+    pub kind: String,
+    pub segment: String,
+    pub segment_index: i32,
+    pub phi_deg: f32,
+    pub section: usize,
+    pub amplitude: f32,
+    pub tentacle: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -249,6 +278,8 @@ pub fn parse_net_json(text: &str) -> Result<Net, ConvertError> {
         }
         faces.push(idx);
     }
+    let n_phi = v.get("n_phi").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let n_segments = v.get("n_segments").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
     Ok(Net {
         kind: v
             .get("kind")
@@ -260,6 +291,11 @@ pub fn parse_net_json(text: &str) -> Result<Net, ConvertError> {
         t: v.get("T").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
         verts,
         faces,
+        n_phi,
+        n_segments,
+        twist: v.get("twist").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
+        radius: v.get("radius").and_then(|x| x.as_f64()).unwrap_or(1.0) as f32,
+        height: v.get("height").and_then(|x| x.as_f64()).unwrap_or(2.0) as f32,
     })
 }
 
@@ -309,6 +345,21 @@ pub fn face_centroids(net: &Net) -> Vec<[f32; 3]> {
 
 /// Unique undirected edges. Color from the first face that owns the edge.
 pub fn catalog_line_verts(net: &Net, faces: &[PixelFace]) -> Result<Vec<CatalogSeg>, ConvertError> {
+    catalog_line_verts_palette(net, faces, &SECTION_RGBA)
+}
+
+pub fn catalog_line_verts_species(
+    net: &Net,
+    faces: &[PixelFace],
+) -> Result<Vec<CatalogSeg>, ConvertError> {
+    catalog_line_verts_palette(net, faces, &SPECIES_RGBA)
+}
+
+pub fn catalog_line_verts_palette(
+    net: &Net,
+    faces: &[PixelFace],
+    palette: &[[f32; 4]; 4],
+) -> Result<Vec<CatalogSeg>, ConvertError> {
     if faces.len() != net.faces.len() {
         return Err(ConvertError::FaceMismatch {
             pixels: faces.len(),
@@ -321,7 +372,7 @@ pub fn catalog_line_verts(net: &Net, faces: &[PixelFace]) -> Result<Vec<CatalogS
         if ring.len() < 2 {
             continue;
         }
-        let color = faces[fi].rgba();
+        let color = palette[faces[fi].section_bits()];
         for k in 0..ring.len() {
             let i = ring[k];
             let j = ring[(k + 1) % ring.len()];
@@ -333,6 +384,68 @@ pub fn catalog_line_verts(net: &Net, faces: &[PixelFace]) -> Result<Vec<CatalogS
             let b = net.verts.get(j as usize).copied().unwrap_or([0.0; 3]);
             out.push(CatalogSeg { a, b, color });
         }
+    }
+    Ok(out)
+}
+
+pub fn load_setal_sites(dir: &Path) -> Result<Vec<SetalSite>, ConvertError> {
+    let log_path = dir.join("setal_log.json");
+    let painted_path = dir.join("painted.json");
+    if !log_path.is_file() {
+        return Ok(Vec::new());
+    }
+    let log: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&log_path)?).map_err(json_err)?;
+    let painted: serde_json::Value = if painted_path.is_file() {
+        serde_json::from_str(&std::fs::read_to_string(&painted_path)?).map_err(json_err)?
+    } else {
+        serde_json::Value::Array(vec![])
+    };
+    let mut face_section: std::collections::HashMap<u64, (usize, f32)> =
+        std::collections::HashMap::new();
+    if let Some(arr) = painted.as_array() {
+        for rec in arr {
+            let i = rec.get("i").and_then(|x| x.as_u64()).unwrap_or(0);
+            let name = rec
+                .get("section")
+                .and_then(|x| x.as_str())
+                .unwrap_or("elliptic");
+            let bits = SECTION_NAMES.iter().position(|s| *s == name).unwrap_or(0);
+            let amp = rec.get("amplitude").and_then(|x| x.as_f64()).unwrap_or(1.0) as f32;
+            face_section.insert(i, (bits, amp));
+        }
+    }
+    let mut out = Vec::new();
+    let arr = log
+        .as_array()
+        .ok_or(ConvertError::BadNet("setal_log not array"))?;
+    for rec in arr {
+        let segment = rec
+            .get("segment")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        let kind = rec
+            .get("kind")
+            .and_then(|x| x.as_str())
+            .unwrap_or("seta")
+            .to_string();
+        let idx = SEGMENTS
+            .iter()
+            .position(|s| *s == segment.as_str())
+            .map(|i| i as i32)
+            .unwrap_or(-1);
+        let face = rec.get("face").and_then(|x| x.as_u64()).unwrap_or(0);
+        let (section, amp) = face_section.get(&face).copied().unwrap_or((0, 1.0));
+        out.push(SetalSite {
+            tentacle: kind == "tentacle",
+            kind,
+            segment,
+            segment_index: idx,
+            phi_deg: rec.get("phi_deg").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
+            section,
+            amplitude: amp,
+        });
     }
     Ok(out)
 }
@@ -451,6 +564,11 @@ mod tests {
                 [0.0, 0.0, -1.0],
             ],
             faces: vec![vec![0, 1, 4, 3, 2], vec![0, 1, 5, 3, 2, 4]],
+            n_phi: 0,
+            n_segments: 0,
+            twist: 0.0,
+            radius: 1.0,
+            height: 2.0,
         };
         let pent = pentavalent_hubs(&net);
         let hex = hexavalent_hubs(&net);
@@ -473,5 +591,13 @@ mod tests {
         let t = r#"{"n_faces":72,"section_agree":0.16666666666666666,"a":"capsid-t7-p22","b":"capsid-t7-polyoma"}"#;
         let v: serde_json::Value = serde_json::from_str(t).unwrap();
         assert!((v["section_agree"].as_f64().unwrap() - 1.0 / 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn species_preview_is_four_bins() {
+        assert_eq!(SPECIES_RGBA.len(), 4);
+        assert!(SPECIES_RGBA[0][0] < 0.15);
+        assert!(SPECIES_RGBA[2][0] > 0.8);
+        assert_eq!(SECTION_RGBA.len(), SPECIES_RGBA.len());
     }
 }
