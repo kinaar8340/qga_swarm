@@ -7,7 +7,7 @@ MAP=(s2 t2 k2 p2 s2 t2 k2 p2)
 
 local_pack() {
   mkdir -p "$ROOT/results/local"
-  for s in s2 t2 k2 p2 helicoid catenoid; do
+  for s in s2 t2 k2 p2 helicoid catenoid hyperboloid; do
     python3 "$ROOT/workers/${s}.py" --out "$ROOT/results/local/${s}_edges.bin"
   done
   for spec in theta0:0 theta25:0.25 theta50:0.5; do

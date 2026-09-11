@@ -1,9 +1,24 @@
-//! QGAE edge files → wire parcels. No qga-gpu. No wgpu.
+//! QGAE edge files + shellscan dumps → wire parcels. No qga-gpu. No wgpu.
+//!
+//! Do not alias qga_pixel onto GpuParticle. Occupant is hubs + cards.
 
 use std::path::Path;
 
 pub const MAGIC: &[u8; 4] = b"QGAE";
 pub const VERSION: u32 = 1;
+
+pub const SECTION_NAMES: [&str; 4] = ["elliptic", "parabolic", "hyperbolic", "flat-pockets"];
+
+/// wrap.py witness RGB + alpha. Four-bin. Not a fifth hue.
+pub const SECTION_RGBA: [[f32; 4]; 4] = [
+    [0.20, 0.60, 1.00, 1.00],
+    [1.00, 0.75, 0.20, 1.00],
+    [1.00, 0.40, 0.20, 1.00],
+    [1.00, 0.20, 0.80, 1.00],
+];
+
+/// SPEC.md GpuParticle.pad hues.
+pub const SECTION_HUE: [f32; 4] = [0.55, 0.10, 0.30, 0.80];
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Hub {
@@ -17,6 +32,60 @@ pub struct WireParcel {
     pub hubs: Vec<Hub>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PixelFace {
+    pub theta: f32,
+    pub phi: f32,
+    pub psi: f32,
+    pub offset: f32,
+    pub amplitude: f32,
+    pub shell_s: f32,
+    pub persist: f32,
+    pub packed: u32,
+}
+
+impl PixelFace {
+    pub fn section_bits(self) -> usize {
+        ((self.packed >> 1) & 3) as usize
+    }
+
+    pub fn section_name(self) -> &'static str {
+        SECTION_NAMES[self.section_bits()]
+    }
+
+    pub fn rgba(self) -> [f32; 4] {
+        SECTION_RGBA[self.section_bits()]
+    }
+
+    pub fn hue(self) -> f32 {
+        SECTION_HUE[self.section_bits()]
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Net {
+    pub kind: String,
+    pub m: i32,
+    pub n: i32,
+    pub t: i32,
+    pub verts: Vec<[f32; 3]>,
+    pub faces: Vec<Vec<u32>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CatalogSeg {
+    pub a: [f32; 3],
+    pub b: [f32; 3],
+    pub color: [f32; 4],
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OccupancyCard {
+    pub section_agree: f32,
+    pub a: String,
+    pub b: String,
+}
+
 #[derive(Debug)]
 pub enum ConvertError {
     Io(std::io::Error),
@@ -24,6 +93,10 @@ pub enum ConvertError {
     PixelAlias,
     BadVersion(u32),
     Truncated,
+    Json(String),
+    BadNet(&'static str),
+    FieldLen { bytes: usize },
+    FaceMismatch { pixels: usize, faces: usize },
 }
 
 impl std::fmt::Display for ConvertError {
@@ -32,10 +105,21 @@ impl std::fmt::Display for ConvertError {
             ConvertError::Io(e) => write!(f, "{e}"),
             ConvertError::NotQgae { got } => write!(f, "not QGAE magic: {got:?}"),
             ConvertError::PixelAlias => {
-                write!(f, "32-byte file without QGAE; will not alias qga_pixel onto GpuParticle")
+                write!(
+                    f,
+                    "32-byte file without QGAE; will not alias qga_pixel onto GpuParticle"
+                )
             }
             ConvertError::BadVersion(v) => write!(f, "unsupported QGAE version {v}"),
             ConvertError::Truncated => write!(f, "truncated QGAE file"),
+            ConvertError::Json(s) => write!(f, "json: {s}"),
+            ConvertError::BadNet(s) => write!(f, "bad net.json: {s}"),
+            ConvertError::FieldLen { bytes } => {
+                write!(f, "qga_pixel_field length {bytes} not a multiple of 32")
+            }
+            ConvertError::FaceMismatch { pixels, faces } => {
+                write!(f, "pixel faces {pixels} != net faces {faces}")
+            }
         }
     }
 }
@@ -98,6 +182,196 @@ pub fn glam_edges(parcel: &WireParcel) -> Vec<[glam::Vec3; 2]> {
         .collect()
 }
 
+pub fn parse_qga_pixel_field(bytes: &[u8]) -> Result<Vec<PixelFace>, ConvertError> {
+    if bytes.len() % 32 != 0 {
+        return Err(ConvertError::FieldLen { bytes: bytes.len() });
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 32);
+    for chunk in bytes.chunks_exact(32) {
+        out.push(PixelFace {
+            theta: f32::from_le_bytes(chunk[0..4].try_into().unwrap()),
+            phi: f32::from_le_bytes(chunk[4..8].try_into().unwrap()),
+            psi: f32::from_le_bytes(chunk[8..12].try_into().unwrap()),
+            offset: f32::from_le_bytes(chunk[12..16].try_into().unwrap()),
+            amplitude: f32::from_le_bytes(chunk[16..20].try_into().unwrap()),
+            shell_s: f32::from_le_bytes(chunk[20..24].try_into().unwrap()),
+            persist: f32::from_le_bytes(chunk[24..28].try_into().unwrap()),
+            packed: u32::from_le_bytes(chunk[28..32].try_into().unwrap()),
+        });
+    }
+    Ok(out)
+}
+
+pub fn load_qga_pixel_field(path: &Path) -> Result<Vec<PixelFace>, ConvertError> {
+    parse_qga_pixel_field(&std::fs::read(path)?)
+}
+
+fn json_err(e: serde_json::Error) -> ConvertError {
+    ConvertError::Json(e.to_string())
+}
+
+fn as_vec3(v: &serde_json::Value) -> Result<[f32; 3], ConvertError> {
+    let a = v.as_array().ok_or(ConvertError::BadNet("vert not array"))?;
+    if a.len() < 3 {
+        return Err(ConvertError::BadNet("vert short"));
+    }
+    Ok([
+        a[0].as_f64().ok_or(ConvertError::BadNet("vert x"))? as f32,
+        a[1].as_f64().ok_or(ConvertError::BadNet("vert y"))? as f32,
+        a[2].as_f64().ok_or(ConvertError::BadNet("vert z"))? as f32,
+    ])
+}
+
+pub fn parse_net_json(text: &str) -> Result<Net, ConvertError> {
+    let v: serde_json::Value = serde_json::from_str(text).map_err(json_err)?;
+    let verts_v = v
+        .get("verts")
+        .and_then(|x| x.as_array())
+        .ok_or(ConvertError::BadNet("missing verts"))?;
+    let faces_v = v
+        .get("faces")
+        .and_then(|x| x.as_array())
+        .ok_or(ConvertError::BadNet("missing faces"))?;
+    let mut verts = Vec::with_capacity(verts_v.len());
+    for p in verts_v {
+        verts.push(as_vec3(p)?);
+    }
+    let mut faces = Vec::with_capacity(faces_v.len());
+    for f in faces_v {
+        let ring = f.as_array().ok_or(ConvertError::BadNet("face not array"))?;
+        let mut idx = Vec::with_capacity(ring.len());
+        for i in ring {
+            let n = i
+                .as_u64()
+                .or_else(|| i.as_i64().map(|x| x as u64))
+                .ok_or(ConvertError::BadNet("face index"))?;
+            idx.push(n as u32);
+        }
+        faces.push(idx);
+    }
+    Ok(Net {
+        kind: v
+            .get("kind")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        m: v.get("m").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+        n: v.get("n").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+        t: v.get("T").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+        verts,
+        faces,
+    })
+}
+
+pub fn load_net_json(path: &Path) -> Result<Net, ConvertError> {
+    parse_net_json(&std::fs::read_to_string(path)?)
+}
+
+fn face_centroid(net: &Net, face: &[u32]) -> [f32; 3] {
+    let mut s = [0.0f32; 3];
+    let mut n = 0.0f32;
+    for &i in face {
+        if let Some(v) = net.verts.get(i as usize) {
+            s[0] += v[0];
+            s[1] += v[1];
+            s[2] += v[2];
+            n += 1.0;
+        }
+    }
+    if n < 1.0 {
+        return [0.0, 0.0, 0.0];
+    }
+    [s[0] / n, s[1] / n, s[2] / n]
+}
+
+fn hubs_of_degree(net: &Net, deg: usize, radius: f32) -> Vec<Hub> {
+    net.faces
+        .iter()
+        .filter(|f| f.len() == deg)
+        .map(|f| Hub {
+            pos: face_centroid(net, f),
+            radius,
+        })
+        .collect()
+}
+
+pub fn pentavalent_hubs(net: &Net) -> Vec<Hub> {
+    hubs_of_degree(net, 5, 0.05)
+}
+
+pub fn hexavalent_hubs(net: &Net) -> Vec<Hub> {
+    hubs_of_degree(net, 6, 0.03)
+}
+
+pub fn face_centroids(net: &Net) -> Vec<[f32; 3]> {
+    net.faces.iter().map(|f| face_centroid(net, f)).collect()
+}
+
+/// Unique undirected edges. Color from the first face that owns the edge.
+pub fn catalog_line_verts(net: &Net, faces: &[PixelFace]) -> Result<Vec<CatalogSeg>, ConvertError> {
+    if faces.len() != net.faces.len() {
+        return Err(ConvertError::FaceMismatch {
+            pixels: faces.len(),
+            faces: net.faces.len(),
+        });
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for (fi, ring) in net.faces.iter().enumerate() {
+        if ring.len() < 2 {
+            continue;
+        }
+        let color = faces[fi].rgba();
+        for k in 0..ring.len() {
+            let i = ring[k];
+            let j = ring[(k + 1) % ring.len()];
+            let key = if i <= j { (i, j) } else { (j, i) };
+            if !seen.insert(key) {
+                continue;
+            }
+            let a = net.verts.get(i as usize).copied().unwrap_or([0.0; 3]);
+            let b = net.verts.get(j as usize).copied().unwrap_or([0.0; 3]);
+            out.push(CatalogSeg { a, b, color });
+        }
+    }
+    Ok(out)
+}
+
+pub fn load_occupancy(path: &Path) -> Result<OccupancyCard, ConvertError> {
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path)?).map_err(json_err)?;
+    Ok(OccupancyCard {
+        section_agree: v
+            .get("section_agree")
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0) as f32,
+        a: v.get("a")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        b: v.get("b")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+    })
+}
+
+pub fn nearest_section(cents: &[[f32; 3]], faces: &[PixelFace], p: [f32; 3]) -> usize {
+    let mut best = 0usize;
+    let mut best_d = f32::MAX;
+    for (i, c) in cents.iter().enumerate() {
+        let dx = c[0] - p[0];
+        let dy = c[1] - p[1];
+        let dz = c[2] - p[2];
+        let d = dx * dx + dy * dy + dz * dz;
+        if d < best_d {
+            best_d = d;
+            best = i;
+        }
+    }
+    faces.get(best).map(|f| f.section_bits()).unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +387,12 @@ mod tests {
                 }
             }
         }
+        b
+    }
+
+    fn pack_pixel(section: u32) -> [u8; 32] {
+        let mut b = [0u8; 32];
+        b[28..32].copy_from_slice(&(section << 1).to_le_bytes());
         b
     }
 
@@ -134,5 +414,64 @@ mod tests {
     fn reject_wrong_magic() {
         let err = parse_qgae(b"NOPE\x01\x00\x00\x00\x00\x00\x00\x00").unwrap_err();
         assert!(matches!(err, ConvertError::NotQgae { .. }));
+    }
+
+    #[test]
+    fn pixel_field_section_bits() {
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&pack_pixel(0));
+        blob.extend_from_slice(&pack_pixel(2));
+        let faces = parse_qga_pixel_field(&blob).unwrap();
+        assert_eq!(faces.len(), 2);
+        assert_eq!(faces[0].section_name(), "elliptic");
+        assert_eq!(faces[1].section_name(), "hyperbolic");
+        assert!((faces[0].hue() - 0.55).abs() < 1e-6);
+        assert!((faces[1].hue() - 0.30).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pixel_field_rejects_odd_len() {
+        let err = parse_qga_pixel_field(&[0u8; 31]).unwrap_err();
+        assert!(matches!(err, ConvertError::FieldLen { bytes: 31 }));
+    }
+
+    #[test]
+    fn pentavalent_hubs_on_tiny_net() {
+        let net = Net {
+            kind: "goldberg".into(),
+            m: 1,
+            n: 1,
+            t: 3,
+            verts: vec![
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [-1.0, 0.0, 0.0],
+                [0.0, -1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, -1.0],
+            ],
+            faces: vec![vec![0, 1, 4, 3, 2], vec![0, 1, 5, 3, 2, 4]],
+        };
+        let pent = pentavalent_hubs(&net);
+        let hex = hexavalent_hubs(&net);
+        assert_eq!(pent.len(), 1);
+        assert_eq!(hex.len(), 1);
+        let pix = vec![
+            PixelFace::default(),
+            PixelFace {
+                packed: 2 << 1,
+                ..PixelFace::default()
+            },
+        ];
+        let segs = catalog_line_verts(&net, &pix).unwrap();
+        assert!(!segs.is_empty());
+        assert_eq!(segs[0].color, SECTION_RGBA[0]);
+    }
+
+    #[test]
+    fn occupancy_from_compare_json() {
+        let t = r#"{"n_faces":72,"section_agree":0.16666666666666666,"a":"capsid-t7-p22","b":"capsid-t7-polyoma"}"#;
+        let v: serde_json::Value = serde_json::from_str(t).unwrap();
+        assert!((v["section_agree"].as_f64().unwrap() - 1.0 / 6.0).abs() < 1e-9);
     }
 }

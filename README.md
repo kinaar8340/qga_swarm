@@ -18,13 +18,26 @@ prove it captured the occupant. This repo does not prove it either.
 
 This repo consumes those dumps and four CPU wire generators.
 
-## Beat sheet (assemble_catalog.mp4)
+## Beat sheet (assemble_catalog.mp4 stills)
 
 1. Generators — S² T² K² P² wires (line_segments)
-2. Catalog    — S² remains; T=3 occupant triangle is cards + hubs,
-                not ocean particles
+2. Catalog    — S² remains; occupant is cards + hubs, not ocean particles
 3. Lens       — helicoid / catenoid rulings, mid-plane orb as ∂p/∂t
 4. Refuse     — Hypothesis/Model card. Faceplate unused.
+
+## Beat sheet (caterpillar_topology.mp4)
+
+Same last mile. Occupant retargeted at larva dumps. 48 frames, one Renderer.
+
+1. Generators — four homology wires appear
+2. Catalog    — `banded-larva` net; 12 pentavalent geodesic hubs; hexavalent empty
+3. Lens       — helicoid / catenoid, mid-plane orb as ∂p/∂t on `workers/theta.py`
+4. Cage       — one-sheet hyperboloid rulings (Model, not a third minimal surface)
+5. Life       — ≤512 CPU motes along rulings; `write_particles` is display
+6. Refuse     — HUD Venn + occupancy card. Catalog cannot prove it captured the occupant
+
+`--beat caterpillar` captures every frame as `frame_XXXX.bgra`. Without `--beat`
+the old per-stem still path is unchanged (`assemble_catalog.sh`).
 
 ## Layout
 
@@ -68,6 +81,22 @@ Four named flags → `{s2,t2,k2,p2}.bgra` under `--capture`. `--helicoid`/`--cat
     ./scripts/assemble_catalog.sh --out output/mp4/assemble_catalog.mp4 \
       /tmp/qga_swarm_cat /tmp/qga_swarm_theta
 
+    python3 workers/hyperboloid.py --out results/local/hyperboloid_edges.bin
+    cargo run -p qga-swarm-preview -- --headless --frames 48 \
+      --beat caterpillar \
+      --s2 results/local/s2_edges.bin \
+      --t2 results/local/t2_edges.bin \
+      --k2 results/local/k2_edges.bin \
+      --p2 results/local/p2_edges.bin \
+      --helicoid results/local/helicoid_edges.bin \
+      --catenoid results/local/catenoid_edges.bin \
+      --hyperboloid results/local/hyperboloid_edges.bin \
+      --field "$HOME/Projects/shellscan/output/recipe/banded-larva" \
+      --compare "$HOME/Projects/shellscan/output/recipe/compare_capsid-t7-p22_capsid-t7-polyoma.json" \
+      --capture output/mp4/caterpillar_topology
+    ./scripts/assemble_caterpillar.sh --out output/mp4/caterpillar_topology.mp4 \
+      output/mp4/caterpillar_topology
+
     python3 workers/theta.py --theta 0 --out /tmp/theta0_edges.bin
     python3 workers/theta.py --theta 0.25 --out /tmp/theta25_edges.bin
     python3 workers/theta.py --theta 0.5 --out /tmp/theta50_edges.bin
@@ -85,4 +114,4 @@ Remote homology MAP is unchanged (bud2/6 s2, bud3/7 t2, bud4/8 k2, bud5/9 p2). R
 
 Track 3 is `bin/fleet grok` (facts/status). Last mile stays on bud.
 
-θ family is Model; conjugate helicoid is not `helicoid.py`. Catalog stems are `s2 t2 k2 p2 helicoid catenoid theta0 theta25 theta50` (fail-closed). HUD is T=3 catalog + refuse cards (`write_hud`), not ocean particles and not occupant proof. Pin is `pins.toml` (`qga_gpu@90aa7fc`). Never path-dep `~/Projects/qga_gpu`.
+θ family is Model; conjugate helicoid is not `helicoid.py`. Catalog stems are `s2 t2 k2 p2 helicoid catenoid theta0 theta25 theta50` (fail-closed). HUD is catalog + refuse cards (`write_hud`), not ocean particles and not occupant proof. Pin is `pins.toml` (`qga_gpu@90aa7fc`; old `b9c9994` lacked mixed `update_line_verts`). inner_cone / qga_engine stay on `b9c9994`. Never path-dep `~/Projects/qga_gpu`. Hyperboloid cage is Model. Recipe ≠ morphogenesis.

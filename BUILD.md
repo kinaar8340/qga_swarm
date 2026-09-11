@@ -52,11 +52,28 @@ binary, worker Grok login, bumping qga_gpu.
 Every change is a diff. Do not --always-approve on this repo.
 Test command:
 
+    cargo test -p qga-swarm-convert
     cargo check -p qga-swarm-preview
     python3 workers/s2.py --out /tmp/s2_edges.bin
+    python3 workers/hyperboloid.py --out /tmp/hyperboloid_edges.bin
     # GPU smoke on bud only:
     cargo run -p qga-swarm-preview -- --headless --frames 8 \
         --lines /tmp/s2_edges.bin
+    # beat-sheet film (needs shellscan net.json dump):
+    cargo run -p qga-swarm-preview -- --headless --frames 48 \
+        --beat caterpillar \
+        --s2 results/local/s2_edges.bin \
+        --t2 results/local/t2_edges.bin \
+        --k2 results/local/k2_edges.bin \
+        --p2 results/local/p2_edges.bin \
+        --helicoid results/local/helicoid_edges.bin \
+        --catenoid results/local/catenoid_edges.bin \
+        --hyperboloid results/local/hyperboloid_edges.bin \
+        --field "$HOME/Projects/shellscan/output/recipe/banded-larva" \
+        --capture output/mp4/caterpillar_topology
+
+Pin: qga_gpu@90aa7fc (old b9c9994). Reason: update_line_verts mixed color.
+inner_cone + qga_engine stay on b9c9994. No v0.1.0.
 
 ## Fleet pack (model B, no Grok on workers)
 
