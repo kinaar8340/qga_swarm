@@ -2152,10 +2152,12 @@ fn run_hang(args: Args) -> Result<()> {
     Ok(())
 }
 
-const TAPER_S: [f32; 7] = [0.00, 0.08, 0.20, 0.45, 0.75, 0.92, 1.00];
-const TAPER_R: [f32; 7] = [0.35, 0.55, 0.70, 1.00, 0.85, 0.55, 0.30];
-/// L5 length in body units. r_mid = 1, so L ≈ 6 r_mid. Sausage, not a ball.
+/// L5 length. r_mid = 1 so L ≈ 6 r_mid. Four 2π bulges on one open tube.
 const BODY_LEN: f32 = 6.0;
+const R0_BULGE: f32 = 0.72;
+const A_BULGE: f32 = 0.28;
+const L5_RINGS: u32 = 25;
+const L5_SPAN: f32 = 24.0;
 const POLYXENES_RGBA: [[f32; 4]; 4] = [
     [0.08, 0.08, 0.08, 1.00],
     [1.00, 0.45, 0.12, 1.00],
@@ -2163,21 +2165,20 @@ const POLYXENES_RGBA: [[f32; 4]; 4] = [
     [0.92, 0.92, 0.90, 1.00],
 ];
 
-fn taper_r(s: f32) -> f32 {
+/// Four undulations: crests at (i+1/2)/4, necks at k/4. Not four T² catalogs.
+fn bulge_r(s: f32) -> f32 {
     let s = s.clamp(0.0, 1.0);
-    for i in 0..6 {
-        if s <= TAPER_S[i + 1] {
-            let t = (s - TAPER_S[i]) / (TAPER_S[i + 1] - TAPER_S[i]);
-            return TAPER_R[i] + t * (TAPER_R[i + 1] - TAPER_R[i]);
-        }
-    }
-    TAPER_R[6]
+    R0_BULGE - A_BULGE * (8.0 * std::f32::consts::PI * s).cos()
+}
+
+fn is_neck_s(s: f32) -> bool {
+    [0.25, 0.50, 0.75].iter().any(|&n| (s - n).abs() < 0.022)
 }
 
 fn tube_point(s: f32, phi_deg: f32, _height: f32) -> Vec3 {
     let s = s.clamp(0.0, 1.0);
     let z = 0.5 * BODY_LEN - s * BODY_LEN;
-    let r = taper_r(s);
+    let r = bulge_r(s);
     let p = phi_deg.to_radians();
     Vec3::new(r * p.cos(), r * p.sin(), z)
 }
@@ -2193,9 +2194,9 @@ fn tube_rings(n_seg: u32, n_phi: u32, _height: f32) -> Vec<Vec<Vec3>> {
     let n_rings = n_seg + 1;
     let mut rings = vec![vec![Vec3::ZERO; n_phi as usize]; n_rings as usize];
     for i in 0..n_rings {
-        let s = i as f32 / 13.0;
+        let s = i as f32 / L5_SPAN;
         let z = 0.5 * BODY_LEN - s * BODY_LEN;
-        let r = taper_r(s);
+        let r = bulge_r(s);
         for j in 0..n_phi {
             let phi = std::f32::consts::TAU * j as f32 / n_phi as f32;
             rings[i as usize][j as usize] = Vec3::new(r * phi.cos(), r * phi.sin(), z);
@@ -2213,10 +2214,10 @@ fn tube_paint_bits(
 ) -> usize {
     let phi = ((phi_deg % 360.0) + 360.0) % 360.0;
     let phi_abs = if phi > 180.0 { 360.0 - phi } else { phi };
-    let seg = (s * 13.0).floor().clamp(0.0, 12.0) as u32;
+    let live_s = (n_seg as f32 + 0.5) / L5_SPAN;
     let ventral = phi_abs > 145.0 && phi_abs < 178.0;
-    let proleg_seg = matches!(seg, 5 | 6 | 7 | 8 | 12);
-    if ventral && proleg_seg && n_seg > seg {
+    let proleg_zone = (s > 0.50 && s < 0.75) || s > 0.90;
+    if ventral && proleg_zone && s <= live_s {
         return 3;
     }
     if let Some(atlas) = atlas {
@@ -2224,7 +2225,7 @@ fn tube_paint_bits(
             if site.group != "D" && site.group != "SD" && site.group != "XD" {
                 continue;
             }
-            if site.s > (n_seg as f32 + 0.5) / 13.0 {
+            if site.s > live_s {
                 continue;
             }
             let dphi = shortest_dphi(phi_abs, site.phi_deg.abs()).abs();
@@ -2233,14 +2234,8 @@ fn tube_paint_bits(
             }
         }
     }
-    if allow_belt {
-        let mut d = 1.0f32;
-        for k in 1..n_seg {
-            d = d.min((s - k as f32 / 13.0).abs());
-        }
-        if d < 0.018 {
-            return 0;
-        }
+    if allow_belt && is_neck_s(s) {
+        return 0;
     }
     2
 }
@@ -2268,8 +2263,8 @@ fn tube_verts(
         });
     };
     for (i, ring) in rings.iter().enumerate() {
-        let s = i as f32 / 13.0;
-        let joint = i > 0 && (i as u32) < n_seg;
+        let s = i as f32 / L5_SPAN;
+        let joint = is_neck_s(s) && i > 0 && (i as u32) < n_seg;
         for j in 0..n_phi {
             let j2 = ((j + 1) % n_phi) as usize;
             let phi = 360.0 * j as f32 / n_phi as f32;
@@ -2282,7 +2277,7 @@ fn tube_verts(
         }
     }
     for i in 0..n_seg {
-        let s = (i as f32 + 0.5) / 13.0;
+        let s = (i as f32 + 0.5) / L5_SPAN;
         for j in 0..n_phi {
             let phi = 360.0 * j as f32 / n_phi as f32;
             let bits = tube_paint_bits(s, phi, n_seg, atlas, false);
@@ -2344,7 +2339,7 @@ fn body_hud(beat: &str, instar: &str, painted: bool) -> Vec<HudVert> {
     hud_quad(&mut v, -0.96, 0.50, -0.38, 0.94, PANEL);
     hud_text(&mut v, -0.94, 0.90, 0.016, "POLYXENES", GOLD_A);
     hud_text(&mut v, -0.94, 0.84, 0.014, "MODEL", INK);
-    hud_text(&mut v, -0.94, 0.78, 0.014, "SAUSAGE L=6R", INK);
+    hud_text(&mut v, -0.94, 0.78, 0.014, "4x2PI BULGES", INK);
     hud_text(
         &mut v,
         -0.94,
@@ -2359,9 +2354,10 @@ fn body_hud(beat: &str, instar: &str, painted: bool) -> Vec<HudVert> {
     );
     hud_text(&mut v, -0.94, 0.66, 0.014, "OPEN", GOLD_A);
     hud_text(&mut v, -0.94, 0.60, 0.012, "NOT CHI=2", INK);
+    hud_text(&mut v, -0.94, 0.54, 0.011, "NECKS = BELTS", INK);
+    hud_text(&mut v, -0.94, 0.48, 0.011, "NOT T2 CATALOG", INK);
     if painted {
-        hud_text(&mut v, -0.94, 0.54, 0.011, "BELTS AT JOINTS", INK);
-        hud_text(&mut v, -0.94, 0.48, 0.011, "SPOTS D/SD", INK);
+        hud_text(&mut v, -0.94, 0.42, 0.011, "SPOTS D/SD", INK);
     }
     hud_quad(&mut v, 0.38, 0.50, 0.96, 0.94, PANEL);
     hud_text(&mut v, 0.40, 0.90, 0.016, "REFUSE", GOLD_A);
@@ -2415,12 +2411,12 @@ fn run_body(args: Args) -> Result<()> {
         let tcam = i as f32 / frames.max(1) as f32;
         camera.yaw = 0.70 + 1.40 * tcam;
         let (n_from, n_to, instar, paint_a, name) = match stage {
-            0 => (3u32, 3u32, 1u8, 0.0, "L1"),
-            1 => (3, 5, 2, 0.0, "L2"),
-            2 => (5, 8, 3, 0.0, "L3"),
-            3 => (8, 11, 4, 0.0, "L4"),
-            4 => (11, 13, 5, frac, "L5 PAINT"),
-            _ => (13, 13, 5, 1.0, "L5 HOLD"),
+            0 => (6u32, 6u32, 1u8, 0.0, "L1"),
+            1 => (6, 9, 2, 0.0, "L2"),
+            2 => (9, 12, 3, 0.0, "L3"),
+            3 => (12, 18, 4, 0.0, "L4"),
+            4 => (18, 24, 5, frac, "L5 PAINT"),
+            _ => (24, 24, 5, 1.0, "L5 HOLD"),
         };
         let n_seg = if n_to > n_from {
             n_from + ((n_to - n_from) as f32 * frac).round() as u32
@@ -2428,7 +2424,7 @@ fn run_body(args: Args) -> Result<()> {
             n_to
         }
         .max(n_from)
-        .min(13);
+        .min(L5_RINGS - 1);
         let rings = tube_rings(n_seg, n_phi, height);
         let mut verts = tube_verts(&rings, n_seg, paint_a, atlas.as_ref());
         verts.extend(edges_to_verts(&head_cap(height), BONE * 0.85));
@@ -2457,7 +2453,7 @@ fn run_body(args: Args) -> Result<()> {
                     vec![site.phi_deg]
                 };
                 for &phi in &phis {
-                    if site.s > (n_seg as f32 + 0.35) / 13.0 {
+                    if site.s > (n_seg as f32 + 0.35) / L5_SPAN {
                         continue;
                     }
                     let p = tube_point(site.s, phi, height);
@@ -2496,11 +2492,10 @@ fn run_body(args: Args) -> Result<()> {
         }
 
         if instar >= 3 {
-            for (seg, live) in [(5u32, 3u8), (6, 3), (7, 4), (8, 4), (12, 5)] {
-                if instar < live || n_seg <= seg {
+            for (s, live) in [(0.54f32, 3u8), (0.62, 3), (0.70, 4), (0.96, 5)] {
+                if instar < live || s > (n_seg as f32 + 0.35) / L5_SPAN {
                     continue;
                 }
-                let s = (seg as f32 + 0.5) / 13.0;
                 for sign in [-1.0f32, 1.0] {
                     let phi = 162.0 * sign;
                     let p = tube_point(s, phi, height);
