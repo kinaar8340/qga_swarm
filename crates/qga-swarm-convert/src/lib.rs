@@ -512,6 +512,57 @@ pub fn load_chaetotaxy(path: &Path) -> Result<Chaetotaxy, ConvertError> {
     parse_chaetotaxy(&std::fs::read_to_string(path)?)
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupRms {
+    pub group: String,
+    pub rms: f32,
+    pub cell_jump: bool,
+}
+
+pub fn load_group_row(path: &Path, source: &str) -> Vec<GroupRms> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    let Some(species) = v.get("species").and_then(|x| x.as_object()) else {
+        return Vec::new();
+    };
+    let key = source.trim_start_matches("setal-");
+    let row = species
+        .get(key)
+        .or_else(|| species.get(source))
+        .or_else(|| {
+            species
+                .iter()
+                .find(|(k, _)| source.contains(k.as_str()) || k.contains(key))
+                .map(|(_, v)| v)
+        });
+    let Some(row) = row else {
+        return Vec::new();
+    };
+    let Some(by) = row.get("by_group").and_then(|x| x.as_object()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for g in ["XD", "D", "SD", "L", "SV", "V"] {
+        if let Some(rec) = by.get(g) {
+            if let Some(rms) = rec.get("rms").and_then(|x| x.as_f64()) {
+                out.push(GroupRms {
+                    group: g.to_string(),
+                    rms: rms as f32,
+                    cell_jump: rec
+                        .get("cell_jump")
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false),
+                });
+            }
+        }
+    }
+    out
+}
+
 pub fn load_setal_sites(dir: &Path) -> Result<Vec<SetalSite>, ConvertError> {
     let log_path = dir.join("setal_log.json");
     let painted_path = dir.join("painted.json");

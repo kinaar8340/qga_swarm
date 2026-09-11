@@ -9,9 +9,9 @@ use qga_gpu::{
 };
 use qga_swarm_convert::{
     catalog_line_verts, face_centroids, glam_edges, hexavalent_hubs, load_chaetotaxy,
-    load_net_json, load_occupancy, load_qga_pixel_field, load_qgae, load_setal_sites,
-    nearest_section, pentavalent_hubs, CatalogSeg, ChaetaSite, Chaetotaxy, Hub, OccupancyCard,
-    PixelFace, SetalSite, SECTION_HUE, SECTION_RGBA, SPECIES_RGBA,
+    load_group_row, load_net_json, load_occupancy, load_qga_pixel_field, load_qgae,
+    load_setal_sites, nearest_section, pentavalent_hubs, CatalogSeg, ChaetaSite, Chaetotaxy,
+    GroupRms, Hub, OccupancyCard, PixelFace, SetalSite, SECTION_HUE, SECTION_RGBA, SPECIES_RGBA,
 };
 use std::path::{Path, PathBuf};
 
@@ -118,6 +118,7 @@ fn parse_args() -> Result<Args> {
     let mut field: Option<PathBuf> = None;
     let mut larva: Option<PathBuf> = None;
     let mut chaeta: Option<PathBuf> = None;
+    let mut groups: Option<PathBuf> = None;
     let mut compare: Option<PathBuf> = None;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -131,6 +132,7 @@ fn parse_args() -> Result<Args> {
             "--field" => field = Some(PathBuf::from(it.next().context("--field PATH")?)),
             "--larva" => larva = Some(PathBuf::from(it.next().context("--larva PATH")?)),
             "--chaeta" => chaeta = Some(PathBuf::from(it.next().context("--chaeta PATH")?)),
+            "--groups" => groups = Some(PathBuf::from(it.next().context("--groups PATH")?)),
             "--compare" => compare = Some(PathBuf::from(it.next().context("--compare PATH")?)),
             "--s2" => named.push(Job {
                 path: PathBuf::from(it.next().context("--s2 PATH")?),
@@ -230,6 +232,7 @@ fn parse_args() -> Result<Args> {
         field,
         larva,
         chaeta,
+        groups,
         compare,
     })
 }
@@ -244,6 +247,7 @@ struct Args {
     field: Option<PathBuf>,
     larva: Option<PathBuf>,
     chaeta: Option<PathBuf>,
+    groups: Option<PathBuf>,
     compare: Option<PathBuf>,
 }
 
@@ -318,6 +322,23 @@ fn resolve_chaeta_path(raw: Option<&Path>, dir: &Path) -> Option<PathBuf> {
         }
     }
     tries.push(dir.join("chaetotaxy.json"));
+    tries.into_iter().find(|p| p.is_file())
+}
+
+fn resolve_groups_path(raw: Option<&Path>, dir: &Path) -> Option<PathBuf> {
+    let mut tries = Vec::new();
+    if let Some(p) = raw {
+        tries.push(p.to_path_buf());
+    }
+    tries.push(dir.join("compare_groups.json"));
+    if let Some(parent) = dir.parent() {
+        tries.push(parent.join("compare_groups.json"));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let root = PathBuf::from(home).join("Projects/shellscan");
+        tries.push(root.join("output/recipe/compare_groups.json"));
+        tries.push(root.join("docs/recipe-scores/compare_groups.json"));
+    }
     tries.into_iter().find(|p| p.is_file())
 }
 
@@ -1325,6 +1346,7 @@ fn chaeta_hud(
     order_ok: bool,
     cell_jump: bool,
     beat: &str,
+    groups: &[GroupRms],
 ) -> Vec<HudVert> {
     let mut v = plate_hud(species_label(source), None, beat, 0.0, true);
     const INK: [f32; 4] = [0.92, 0.95, 1.00, 0.92];
@@ -1339,6 +1361,19 @@ fn chaeta_hud(
         &format!("DPHI RMS {:.1}", rms),
         GOLD_A,
     );
+    let mut y = 0.24;
+    for g in groups.iter().take(6) {
+        let line = format!("{} {:.1}", g.group, g.rms);
+        hud_text(
+            &mut v,
+            -0.94,
+            y,
+            0.011,
+            &line,
+            if g.cell_jump { GOLD_A } else { INK },
+        );
+        y -= 0.055;
+    }
     if !order_ok || cell_jump {
         hud_text(&mut v, -0.20, 0.34, 0.016, "REFUSE", GOLD_A);
         if cell_jump {
@@ -1655,6 +1690,9 @@ fn run_chaeta(args: Args) -> Result<()> {
     let chaeta_path = resolve_chaeta_path(args.chaeta.as_deref(), &dir)
         .context("caterpillar-chaeta needs chaetotaxy.json")?;
     let atlas = load_chaetotaxy(&chaeta_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let group_rows = resolve_groups_path(args.groups.as_deref(), &dir)
+        .map(|p| load_group_row(&p, &atlas.source))
+        .unwrap_or_default();
     let n_phi = if net.n_phi == 0 { 36 } else { net.n_phi };
     let n_seg = if net.n_segments == 0 {
         13
@@ -1819,6 +1857,7 @@ fn run_chaeta(args: Args) -> Result<()> {
                 atlas.phi_order_ok,
                 cell_jump,
                 beat,
+                &group_rows,
             ),
         )?;
         let grab = capture_dir.is_some();
