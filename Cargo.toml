@@ -7,6 +7,6 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-qga-gpu = { git = "https://github.com/kinaar8340/qga_gpu", rev = "b9c999406e266a585769a4804c6968de0e6d2237", default-features = false, features = ["headless", "capture"] }
+qga-gpu = { git = "https://github.com/kinaar8340/qga_gpu", rev = "90aa7fc739d670d1205c0dd8c47f8c2f632e2eff", default-features = false, features = ["headless", "capture"] }
 glam = "0.29"
 anyhow = "1"

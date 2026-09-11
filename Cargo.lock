@@ -599,7 +599,7 @@ checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
 [[package]]
 name = "qga-gpu"
 version = "0.1.0"
-source = "git+https://github.com/kinaar8340/qga_gpu?rev=b9c999406e266a585769a4804c6968de0e6d2237#b9c999406e266a585769a4804c6968de0e6d2237"
+source = "git+https://github.com/kinaar8340/qga_gpu?rev=90aa7fc739d670d1205c0dd8c47f8c2f632e2eff#90aa7fc739d670d1205c0dd8c47f8c2f632e2eff"
 dependencies = [
  "anyhow",
  "bytemuck",

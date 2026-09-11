@@ -13,7 +13,7 @@ Playground tracks: 6 + 0 + 3 (worker auth present). Not 9.
 
 ## Pins (do not float main)
 
-- qga_gpu@b9c9994 until a planned bump is APPROVED
+- qga_gpu@90aa7fc (`update_line_verts`; old `b9c9994`)
 - qga_engine@7e7866b
 - flux_hopf_lib 0.3.1
 - shellscan recipes: read-only dumps under docs/recipe-scores/

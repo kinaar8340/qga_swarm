@@ -14,7 +14,7 @@ prove it captured the occupant. This repo does not prove it either.
 - shellscan make film          → t3_field_strip.mp4
 - shellscan make film-cylinder → cylinder_isoline.mp4
 - inner_cone owns the observer
-- qga_gpu owns the frame (pin b9c9994)
+- qga_gpu owns the frame (pin 90aa7fc)
 
 This repo consumes those dumps and four CPU wire generators.
 
@@ -85,4 +85,4 @@ Remote homology MAP is unchanged (bud2/6 s2, bud3/7 t2, bud4/8 k2, bud5/9 p2). R
 
 Track 3 is `bin/fleet grok` (facts/status). Last mile stays on bud.
 
-θ family is Model; conjugate helicoid is not `helicoid.py`. Catalog stems are `s2 t2 k2 p2 helicoid catenoid theta0 theta25 theta50` (fail-closed). HUD is T=3 catalog + refuse cards (`write_hud`), not ocean particles and not occupant proof. Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.
+θ family is Model; conjugate helicoid is not `helicoid.py`. Catalog stems are `s2 t2 k2 p2 helicoid catenoid theta0 theta25 theta50` (fail-closed). HUD is T=3 catalog + refuse cards (`write_hud`), not ocean particles and not occupant proof. Pin is `pins.toml` (`qga_gpu@90aa7fc`). Never path-dep `~/Projects/qga_gpu`.
