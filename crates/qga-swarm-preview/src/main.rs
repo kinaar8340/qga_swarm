@@ -2158,6 +2158,9 @@ const R0_BULGE: f32 = 0.72;
 const A_BULGE: f32 = 0.28;
 const L5_RINGS: u32 = 25;
 const L5_SPAN: f32 = 24.0;
+/// Blend revolution (0) → helical tube (1). Small τ = slight helical segmentation.
+const BODY_TAU: f32 = 0.10;
+const HELIX_R: f32 = 0.08;
 const POLYXENES_RGBA: [[f32; 4]; 4] = [
     [0.08, 0.08, 0.08, 1.00],
     [1.00, 0.45, 0.12, 1.00],
@@ -2175,31 +2178,42 @@ fn is_neck_s(s: f32) -> bool {
     [0.25, 0.50, 0.75].iter().any(|&n| (s - n).abs() < 0.022)
 }
 
+fn screw_theta(s: f32) -> f32 {
+    8.0 * std::f32::consts::PI * s.clamp(0.0, 1.0)
+}
+
 fn tube_point(s: f32, phi_deg: f32, _height: f32) -> Vec3 {
     let s = s.clamp(0.0, 1.0);
     let z = 0.5 * BODY_LEN - s * BODY_LEN;
-    let r = bulge_r(s);
-    let p = phi_deg.to_radians();
-    Vec3::new(r * p.cos(), r * p.sin(), z)
+    let a = bulge_r(s);
+    let phi = phi_deg.to_radians();
+    let x_rev = Vec3::new(a * phi.cos(), a * phi.sin(), z);
+    let th = screw_theta(s);
+    let cr = HELIX_R + a * phi.cos();
+    let x_hel = Vec3::new(cr * th.cos(), cr * th.sin(), z + a * phi.sin());
+    x_rev * (1.0 - BODY_TAU) + x_hel * BODY_TAU
 }
 
-fn tube_normal(_s: f32, phi_deg: f32) -> Vec3 {
-    let p = phi_deg.to_radians();
-    Vec3::new(p.cos(), p.sin(), 0.0)
+fn tube_normal(s: f32, phi_deg: f32) -> Vec3 {
+    let phi = phi_deg.to_radians() + BODY_TAU * screw_theta(s);
+    Vec3::new(phi.cos(), phi.sin(), 0.0)
 }
 
-fn tube_rings(n_seg: u32, n_phi: u32, _height: f32) -> Vec<Vec<Vec3>> {
+fn helical_azimuth_deg(s: f32, phi_deg: f32) -> f32 {
+    let p = tube_point(s, phi_deg, 0.0);
+    p.y.atan2(p.x).to_degrees()
+}
+
+fn tube_rings(n_seg: u32, n_phi: u32, height: f32) -> Vec<Vec<Vec3>> {
     let n_seg = n_seg.max(1);
     let n_phi = n_phi.max(8);
     let n_rings = n_seg + 1;
     let mut rings = vec![vec![Vec3::ZERO; n_phi as usize]; n_rings as usize];
     for i in 0..n_rings {
         let s = i as f32 / L5_SPAN;
-        let z = 0.5 * BODY_LEN - s * BODY_LEN;
-        let r = bulge_r(s);
         for j in 0..n_phi {
-            let phi = std::f32::consts::TAU * j as f32 / n_phi as f32;
-            rings[i as usize][j as usize] = Vec3::new(r * phi.cos(), r * phi.sin(), z);
+            let phi_deg = 360.0 * j as f32 / n_phi as f32;
+            rings[i as usize][j as usize] = tube_point(s, phi_deg, height);
         }
     }
     rings
@@ -2331,7 +2345,7 @@ fn gold_ring(center: Vec3, normal: Vec3, rad: f32) -> Vec<[Vec3; 2]> {
     segs
 }
 
-fn body_hud(beat: &str, instar: &str, painted: bool) -> Vec<HudVert> {
+fn body_hud(beat: &str, instar: &str, painted: bool, hel_dphi: f32) -> Vec<HudVert> {
     const PANEL: [f32; 4] = [0.02, 0.04, 0.08, 0.72];
     const INK: [f32; 4] = [0.92, 0.95, 1.00, 0.92];
     const GOLD_A: [f32; 4] = [1.00, 0.78, 0.38, 0.95];
@@ -2339,7 +2353,7 @@ fn body_hud(beat: &str, instar: &str, painted: bool) -> Vec<HudVert> {
     hud_quad(&mut v, -0.96, 0.50, -0.38, 0.94, PANEL);
     hud_text(&mut v, -0.94, 0.90, 0.016, "POLYXENES", GOLD_A);
     hud_text(&mut v, -0.94, 0.84, 0.014, "MODEL", INK);
-    hud_text(&mut v, -0.94, 0.78, 0.014, "4x2PI BULGES", INK);
+    hud_text(&mut v, -0.94, 0.78, 0.014, "HELICAL 4x2PI", INK);
     hud_text(
         &mut v,
         -0.94,
@@ -2354,11 +2368,18 @@ fn body_hud(beat: &str, instar: &str, painted: bool) -> Vec<HudVert> {
     );
     hud_text(&mut v, -0.94, 0.66, 0.014, "OPEN", GOLD_A);
     hud_text(&mut v, -0.94, 0.60, 0.012, "NOT CHI=2", INK);
-    hud_text(&mut v, -0.94, 0.54, 0.011, "NECKS = BELTS", INK);
+    hud_text(&mut v, -0.94, 0.54, 0.011, "TAU 0.10 P=L/4", INK);
     hud_text(&mut v, -0.94, 0.48, 0.011, "NOT T2 CATALOG", INK);
-    if painted {
-        hud_text(&mut v, -0.94, 0.42, 0.011, "SPOTS D/SD", INK);
-    }
+    hud_text(&mut v, -0.94, 0.42, 0.011, "NOT BOULIGAND", INK);
+    hud_text(&mut v, -0.94, 0.36, 0.011, "NOT ASSOCIATE TH", INK);
+    hud_text(
+        &mut v,
+        -0.94,
+        0.30,
+        0.011,
+        &format!("HELICAL DPHI {:.1}", hel_dphi),
+        GOLD_A,
+    );
     hud_quad(&mut v, 0.38, 0.50, 0.96, 0.94, PANEL);
     hud_text(&mut v, 0.40, 0.90, 0.016, "REFUSE", GOLD_A);
     hud_text(&mut v, 0.40, 0.84, 0.014, "HYPOTHESIS / MODEL", INK);
@@ -2402,6 +2423,12 @@ fn run_body(args: Args) -> Result<()> {
     }
     let height = 2.0f32;
     let n_phi = 36u32;
+    let pitch = BODY_LEN / 4.0;
+    let pmin = 2.0 * A_BULGE;
+    eprintln!(
+        "helical pitch test: P={pitch:.3} 2a={pmin:.3} clearance={}  tau={BODY_TAU}  claims=Model",
+        if pitch > pmin { "ok" } else { "OVERLAP" }
+    );
 
     for i in 0..frames {
         let (stage, frac, flash) = grow_sheet(i, frames);
@@ -2514,9 +2541,27 @@ fn run_body(args: Args) -> Result<()> {
 
         renderer.update_line_verts(&gpu, &verts);
         renderer.write_particles(&gpu, &[])?;
+        let mut hel_acc = 0.0f32;
+        let mut hel_n = 0.0f32;
+        if let Some(atlas) = atlas.as_ref() {
+            for site in &atlas.sites {
+                if site.instar > instar {
+                    continue;
+                }
+                let az = helical_azimuth_deg(site.s, site.phi_deg);
+                hel_acc += shortest_dphi(az, site.phi_deg).abs();
+                hel_n += 1.0;
+            }
+        }
+        let hel_dphi = if hel_n > 0.0 { hel_acc / hel_n } else { 0.0 };
         renderer.write_hud(
             &gpu,
-            &body_hud(if flash { "MOLT" } else { name }, name, paint_a > 0.05),
+            &body_hud(
+                if flash { "MOLT" } else { name },
+                name,
+                paint_a > 0.05,
+                hel_dphi,
+            ),
         )?;
         let grab = capture_dir.is_some();
         if let Some(frame) = renderer.render(&mut gpu, &camera, &vis, time, grab)? {

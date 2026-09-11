@@ -131,8 +131,9 @@ Skeleton then skin (two films, glued at L5 freeze). Paint does not grow.
       output/capture/caterpillar_skin \
       output/capture/caterpillar_chaeta
 
-`--beat caterpillar-body` is a Model animal: tapered ruled tube, gated parts, polyxenes
-witness on the tube after L5. `--frames 1440` is 60 s at 24 fps (L1 stub → adult L=6 r_mid).
+`--beat caterpillar-body` is a Model animal: four 2π bulges on one open tube.
+`BODY_TAU=0.10` blends revolution → helical segments (P=L/4). Not T², not Bouligand,
+not associate θ. Helical capture: `output/capture/caterpillar_body_helical`.
 Not a photograph. Not morphogenesis. Other films stay on disk.
 
     cargo run -p qga-swarm-preview --release -- \
