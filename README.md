@@ -132,10 +132,11 @@ Skeleton then skin (two films, glued at L5 freeze). Paint does not grow.
       output/capture/caterpillar_chaeta
 
 `--beat caterpillar-body` is a Model animal: tapered ruled tube, gated parts, polyxenes
-witness on the tube after L5. Not a photograph. Not morphogenesis. Other films stay on disk.
+witness on the tube after L5. `--frames 1440` is 60 s at 24 fps (L1 stub → adult L=6 r_mid).
+Not a photograph. Not morphogenesis. Other films stay on disk.
 
     cargo run -p qga-swarm-preview --release -- \
-      --beat caterpillar-body --headless --frames 240 --width 1920 --height 1080 \
+      --beat caterpillar-body --headless --frames 1440 --width 1920 --height 1080 \
       --larva "$HOME/Projects/shellscan/output/recipe/setal-polyxenes-cylinder/net.json" \
       --chaeta "$HOME/Projects/shellscan/output/recipe/setal-polyxenes-cylinder/chaetotaxy.json" \
       --capture output/capture/caterpillar_body

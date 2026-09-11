@@ -2389,7 +2389,6 @@ fn run_body(args: Args) -> Result<()> {
     let mut gpu = init_gpu(args.width, args.height)?;
     let mut renderer = Renderer::new(&gpu)?;
     let mut camera = Camera::orbit(Vec3::ZERO, 8.4);
-    camera.yaw = 1.12;
     camera.pitch = 0.16;
     camera.aspect = args.width as f32 / args.height as f32;
     let mut vis = VisualState {
@@ -2413,14 +2412,23 @@ fn run_body(args: Args) -> Result<()> {
         let time = i as f32 / 24.0;
         vis.pulse = 0.5 + 0.5 * time.sin();
         let stage = stage.min(5);
-        let (n_seg, instar, paint_a, name) = match stage {
-            0 => (3u32, 1u8, 0.0, "L1"),
-            1 => (5, 2, 0.0, "L2"),
-            2 => (8, 3, 0.0, "L3"),
-            3 => (11, 4, 0.0, "L4"),
-            4 => (13, 5, frac, "L5 PAINT"),
-            _ => (13, 5, 1.0, "L5 HOLD"),
+        let tcam = i as f32 / frames.max(1) as f32;
+        camera.yaw = 0.70 + 1.40 * tcam;
+        let (n_from, n_to, instar, paint_a, name) = match stage {
+            0 => (3u32, 3u32, 1u8, 0.0, "L1"),
+            1 => (3, 5, 2, 0.0, "L2"),
+            2 => (5, 8, 3, 0.0, "L3"),
+            3 => (8, 11, 4, 0.0, "L4"),
+            4 => (11, 13, 5, frac, "L5 PAINT"),
+            _ => (13, 13, 5, 1.0, "L5 HOLD"),
         };
+        let n_seg = if n_to > n_from {
+            n_from + ((n_to - n_from) as f32 * frac).round() as u32
+        } else {
+            n_to
+        }
+        .max(n_from)
+        .min(13);
         let rings = tube_rings(n_seg, n_phi, height);
         let mut verts = tube_verts(&rings, n_seg, paint_a, atlas.as_ref());
         verts.extend(edges_to_verts(&head_cap(height), BONE * 0.85));
