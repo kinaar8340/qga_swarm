@@ -519,6 +519,54 @@ pub struct GroupRms {
     pub cell_jump: bool,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RdField {
+    pub ns: u32,
+    pub nphi: u32,
+    pub sections: Vec<u8>,
+}
+
+impl RdField {
+    pub fn sample(&self, s: f32, phi_deg: f32) -> usize {
+        if self.ns == 0 || self.nphi == 0 || self.sections.is_empty() {
+            return 2;
+        }
+        let s = s.clamp(0.0, 1.0);
+        let mut phi = phi_deg % 360.0;
+        if phi < 0.0 {
+            phi += 360.0;
+        }
+        let i = ((s * (self.ns - 1) as f32).round() as u32).min(self.ns - 1);
+        let j = ((phi / 360.0 * self.nphi as f32).round() as u32) % self.nphi;
+        let idx = (i * self.nphi + j) as usize;
+        self.sections.get(idx).copied().unwrap_or(2) as usize
+    }
+}
+
+pub fn load_rd_field(path: &Path) -> Result<RdField, ConvertError> {
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path)?).map_err(json_err)?;
+    let ns = v.get("ns").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let nphi = v.get("nphi").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let mut sections = Vec::new();
+    if let Some(arr) = v.get("sections").and_then(|x| x.as_array()) {
+        if arr.first().and_then(|x| x.as_array()).is_some() {
+            for row in arr {
+                if let Some(r) = row.as_array() {
+                    for c in r {
+                        sections.push(c.as_u64().unwrap_or(2) as u8);
+                    }
+                }
+            }
+        } else {
+            for c in arr {
+                sections.push(c.as_u64().unwrap_or(2) as u8);
+            }
+        }
+    }
+    Ok(RdField { ns, nphi, sections })
+}
+
 pub fn load_group_row(path: &Path, source: &str) -> Vec<GroupRms> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();

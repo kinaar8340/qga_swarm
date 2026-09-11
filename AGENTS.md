@@ -85,6 +85,8 @@ Workers never open a GpuContext.
   faces. Do not recut the chaetotaxy strip. Recipe is not morphogenesis.
 - caterpillar-body is a Model animal (tapered tube + parts). Four-bin witness only.
   Not a photograph. Not a pin bump.
+- RD on the (s,φ) chart is pigment Model. Not the segment clock. Not morph_t.
+  Do not run RD in face.wgsl. Do not let RD spawn Goldberg pentagons.
 
 Binaries print claims=Software fact.
 

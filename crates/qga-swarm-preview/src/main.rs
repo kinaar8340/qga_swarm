@@ -10,8 +10,9 @@ use qga_gpu::{
 use qga_swarm_convert::{
     catalog_line_verts, face_centroids, glam_edges, hexavalent_hubs, load_chaetotaxy,
     load_group_row, load_net_json, load_occupancy, load_qga_pixel_field, load_qgae,
-    load_setal_sites, nearest_section, pentavalent_hubs, CatalogSeg, ChaetaSite, Chaetotaxy,
-    GroupRms, Hub, OccupancyCard, PixelFace, SetalSite, SECTION_HUE, SECTION_RGBA, SPECIES_RGBA,
+    load_rd_field, load_setal_sites, nearest_section, pentavalent_hubs, CatalogSeg, ChaetaSite,
+    Chaetotaxy, GroupRms, Hub, OccupancyCard, PixelFace, RdField, SetalSite, SECTION_HUE,
+    SECTION_RGBA, SPECIES_RGBA,
 };
 use std::path::{Path, PathBuf};
 
@@ -120,6 +121,7 @@ fn parse_args() -> Result<Args> {
     let mut chaeta: Option<PathBuf> = None;
     let mut groups: Option<PathBuf> = None;
     let mut compare: Option<PathBuf> = None;
+    let mut rd: Option<PathBuf> = None;
     let mut tau = 0.0f32;
     let mut helix_r = 0.0f32;
     let mut it = std::env::args().skip(1);
@@ -135,6 +137,7 @@ fn parse_args() -> Result<Args> {
             "--larva" => larva = Some(PathBuf::from(it.next().context("--larva PATH")?)),
             "--chaeta" => chaeta = Some(PathBuf::from(it.next().context("--chaeta PATH")?)),
             "--groups" => groups = Some(PathBuf::from(it.next().context("--groups PATH")?)),
+            "--rd" => rd = Some(PathBuf::from(it.next().context("--rd PATH")?)),
             "--tau" => tau = it.next().context("--tau F")?.parse()?,
             "--helix-r" => helix_r = it.next().context("--helix-r F")?.parse()?,
             "--compare" => compare = Some(PathBuf::from(it.next().context("--compare PATH")?)),
@@ -242,6 +245,7 @@ fn parse_args() -> Result<Args> {
         chaeta,
         groups,
         compare,
+        rd,
         tau,
         helix_r,
     })
@@ -259,6 +263,7 @@ struct Args {
     chaeta: Option<PathBuf>,
     groups: Option<PathBuf>,
     compare: Option<PathBuf>,
+    rd: Option<PathBuf>,
     tau: f32,
     helix_r: f32,
 }
@@ -2301,6 +2306,7 @@ fn tube_verts(
     n_seg: u32,
     paint_a: f32,
     atlas: Option<&Chaetotaxy>,
+    rd: Option<&RdField>,
 ) -> Vec<LineVert> {
     let n_phi = rings.first().map(|r| r.len() as u32).unwrap_or(36);
     let bone = [BONE.x, BONE.y, BONE.z, 1.0];
@@ -2326,6 +2332,8 @@ fn tube_verts(
             let phi = 360.0 * j as f32 / n_phi as f32;
             let bits = if joint {
                 0
+            } else if let Some(rd) = rd {
+                rd.sample(s, phi)
             } else {
                 tube_paint_bits(s, phi, n_seg, atlas, false)
             };
@@ -2336,7 +2344,11 @@ fn tube_verts(
         let s = (i as f32 + 0.5) / L5_SPAN;
         for j in 0..n_phi {
             let phi = 360.0 * j as f32 / n_phi as f32;
-            let bits = tube_paint_bits(s, phi, n_seg, atlas, false);
+            let bits = if let Some(rd) = rd {
+                rd.sample(s, phi)
+            } else {
+                tube_paint_bits(s, phi, n_seg, atlas, false)
+            };
             push(
                 &mut out,
                 rings[i as usize][j as usize],
@@ -2394,6 +2406,7 @@ fn body_hud(
     hel_dphi: f32,
     geom: BodyGeom,
     order_ok: bool,
+    rd: bool,
 ) -> Vec<HudVert> {
     const PANEL: [f32; 4] = [0.02, 0.04, 0.08, 0.72];
     const INK: [f32; 4] = [0.92, 0.95, 1.00, 0.92];
@@ -2402,7 +2415,14 @@ fn body_hud(
     hud_quad(&mut v, -0.96, 0.50, -0.38, 0.94, PANEL);
     hud_text(&mut v, -0.94, 0.90, 0.016, "POLYXENES", GOLD_A);
     hud_text(&mut v, -0.94, 0.84, 0.014, "MODEL", INK);
-    hud_text(&mut v, -0.94, 0.78, 0.014, "4x2PI BULGES", INK);
+    hud_text(
+        &mut v,
+        -0.94,
+        0.78,
+        0.014,
+        if rd { "RD ON CHART" } else { "4x2PI BULGES" },
+        INK,
+    );
     hud_text(
         &mut v,
         -0.94,
@@ -2463,6 +2483,10 @@ fn body_hud(
     hud_text(&mut v, 0.40, 0.72, 0.014, "CATALOG CANNOT", INK);
     hud_text(&mut v, 0.40, 0.66, 0.014, "PROVE OCCUPANT", INK);
     hud_text(&mut v, 0.40, 0.60, 0.012, "NOT MORPHOGENESIS", INK);
+    if rd {
+        hud_text(&mut v, 0.40, 0.54, 0.011, "NOT SEGMENT CLOCK", GOLD_A);
+        hud_text(&mut v, 0.40, 0.48, 0.011, "NOT THEOREM", INK);
+    }
     hud_text(&mut v, -0.20, 0.46, 0.014, beat, GOLD_A);
     hud_text(&mut v, -0.20, 0.40, 0.012, instar, INK);
     v
@@ -2478,6 +2502,11 @@ fn run_body(args: Args) -> Result<()> {
     let atlas = resolve_chaeta_path(args.chaeta.as_deref(), &dir)
         .and_then(|p| load_chaetotaxy(&p).ok())
         .or_else(|| load_chaetotaxy(&dir.join("chaetotaxy.json")).ok());
+    let rd = args
+        .rd
+        .as_deref()
+        .and_then(|p| load_rd_field(p).ok())
+        .or_else(|| load_rd_field(&dir.join("rd_field.json")).ok());
 
     let mut gpu = init_gpu(args.width, args.height)?;
     let mut renderer = Renderer::new(&gpu)?;
@@ -2539,7 +2568,7 @@ fn run_body(args: Args) -> Result<()> {
         .max(n_from)
         .min(L5_RINGS - 1);
         let rings = tube_rings(n_seg, n_phi, geom);
-        let mut verts = tube_verts(&rings, n_seg, paint_a, atlas.as_ref());
+        let mut verts = tube_verts(&rings, n_seg, paint_a, atlas.as_ref(), rd.as_ref());
         verts.extend(edges_to_verts(&head_cap(geom), BONE * 0.85));
 
         let eye_r = 0.045;
@@ -2653,6 +2682,7 @@ fn run_body(args: Args) -> Result<()> {
                 hel_dphi,
                 geom,
                 order_ok,
+                rd.is_some(),
             ),
         )?;
         let grab = capture_dir.is_some();
