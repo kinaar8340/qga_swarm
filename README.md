@@ -68,4 +68,13 @@ Four named flags → `{s2,t2,k2,p2}.bgra` under `--capture`. `--helicoid`/`--cat
     ./scripts/assemble_catalog.sh --out output/mp4/assemble_catalog.mp4 \
       /tmp/qga_swarm_cat
 
-Sidecar MP4 is not occupant proof. Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.
+    python3 workers/theta.py --theta 0 --out /tmp/theta0_edges.bin
+    python3 workers/theta.py --theta 0.25 --out /tmp/theta25_edges.bin
+    python3 workers/theta.py --theta 0.5 --out /tmp/theta50_edges.bin
+    cargo run -p qga-swarm-preview -- --headless --frames 8 \
+      --theta results/local/theta0_edges.bin \
+      --theta results/local/theta25_edges.bin \
+      --theta results/local/theta50_edges.bin \
+      --capture /tmp/qga_swarm_theta
+
+θ family is Model; conjugate helicoid is not `helicoid.py`. Do not add theta stems to `assemble_catalog.sh` this pass. Sidecar MP4 is not occupant proof. Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.

@@ -10,6 +10,11 @@ local_pack() {
   for s in s2 t2 k2 p2 helicoid catenoid; do
     python3 "$ROOT/workers/${s}.py" --out "$ROOT/results/local/${s}_edges.bin"
   done
+  for spec in theta0:0 theta25:0.25 theta50:0.5; do
+    s="${spec%%:*}"
+    ph="${spec##*:}"
+    python3 "$ROOT/workers/theta.py" --theta "$ph" --out "$ROOT/results/local/${s}_edges.bin"
+  done
 }
 
 remote_pack() {

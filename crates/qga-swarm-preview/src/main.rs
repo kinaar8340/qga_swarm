@@ -19,13 +19,14 @@ enum Bin {
     P2,
     Helicoid,
     Catenoid,
+    Theta,
 }
 
 impl Bin {
     fn rgb(self) -> Vec3 {
         match self {
             Bin::S2 | Bin::Helicoid => CYAN,
-            Bin::T2 => GOLD,
+            Bin::T2 | Bin::Theta => GOLD,
             Bin::K2 | Bin::Catenoid => ORANGE,
             Bin::P2 => MAGENTA,
         }
@@ -39,12 +40,15 @@ impl Bin {
             Bin::P2 => "p2",
             Bin::Helicoid => "helicoid",
             Bin::Catenoid => "catenoid",
+            Bin::Theta => "theta",
         }
     }
 
     fn from_stem(name: &str) -> Option<Self> {
         let s = name.to_ascii_lowercase();
-        if s.starts_with("helicoid") {
+        if s.starts_with("theta") {
+            Some(Bin::Theta)
+        } else if s.starts_with("helicoid") {
             Some(Bin::Helicoid)
         } else if s.starts_with("catenoid") {
             Some(Bin::Catenoid)
@@ -103,6 +107,10 @@ fn parse_args() -> Result<(u32, Vec<Job>, Option<PathBuf>)> {
                 path: PathBuf::from(it.next().context("--catenoid PATH")?),
                 bin: Bin::Catenoid,
             }),
+            "--theta" => named.push(Job {
+                path: PathBuf::from(it.next().context("--theta PATH")?),
+                bin: Bin::Theta,
+            }),
             "--lines" => lines.push(PathBuf::from(it.next().context("--lines FILE")?)),
             other => bail!("unknown arg {other}"),
         }
@@ -125,7 +133,7 @@ fn parse_args() -> Result<(u32, Vec<Job>, Option<PathBuf>)> {
         }
     }
     if jobs.is_empty() {
-        bail!("need --lines FILE or --s2/--t2/--k2/--p2/--helicoid/--catenoid");
+        bail!("need --lines FILE or --s2/--t2/--k2/--p2/--helicoid/--catenoid/--theta");
     }
     jobs.sort_by_key(|j| match j.bin {
         Bin::S2 => 0,
@@ -134,8 +142,19 @@ fn parse_args() -> Result<(u32, Vec<Job>, Option<PathBuf>)> {
         Bin::P2 => 3,
         Bin::Helicoid => 4,
         Bin::Catenoid => 5,
+        Bin::Theta => 6,
     });
     Ok((frames.max(1), jobs, capture))
+}
+
+fn theta_capture_stem(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("theta");
+    stem.strip_suffix("_edges")
+        .unwrap_or(stem)
+        .to_string()
 }
 
 fn write_bgra(dir: &Path, name: &str, bgra: &[u8], w: u32, h: u32) -> Result<()> {
@@ -196,8 +215,14 @@ fn main() -> Result<()> {
             }
         }
         if let (Some(dir), Some((bgra, w, h))) = (capture.as_deref(), last) {
-            let name = if multi { job.bin.stem() } else { "last" };
-            write_bgra(dir, name, &bgra, w, h)?;
+            let name = if !multi {
+                "last".to_string()
+            } else if matches!(job.bin, Bin::Theta) {
+                theta_capture_stem(&job.path)
+            } else {
+                job.bin.stem().to_string()
+            };
+            write_bgra(dir, &name, &bgra, w, h)?;
         }
     }
     Ok(())
