@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+FLEET="${FLEET:-$HOME/Playground/bin/fleet}"
+HOSTS=(bud2 bud3 bud4 bud5 bud6 bud7 bud8 bud9)
+MAP=(s2 t2 k2 p2 s2 t2 k2 p2)
+
+local_pack() {
+  mkdir -p "$ROOT/results/local"
+  for s in s2 t2 k2 p2; do
+    python3 "$ROOT/workers/${s}.py" --out "$ROOT/results/local/${s}_edges.bin"
+  done
+}
+
+remote_pack() {
+  "$FLEET" copy "$ROOT/workers" /tmp/qga_swarm_workers
+  i=0
+  for h in "${HOSTS[@]}"; do
+    s="${MAP[$i]}"
+    "$FLEET" run --hosts "$h" -- \
+      "python3 /tmp/qga_swarm_workers/${s}.py --out /tmp/${s}_edges.bin"
+    mkdir -p "$ROOT/results/$h"
+    rsync -az "$h:/tmp/${s}_edges.bin" "$ROOT/results/$h/${s}_edges.bin"
+    i=$((i + 1))
+  done
+}
+
+if [[ "${1:-}" == "--local" ]]; then
+  local_pack
+else
+  remote_pack
+fi

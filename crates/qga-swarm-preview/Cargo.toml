@@ -1,0 +1,11 @@
+[package]
+name = "qga-swarm-preview"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qga-swarm-convert = { path = "../qga-swarm-convert" }
+qga-gpu.workspace = true
+glam.workspace = true
+anyhow.workspace = true

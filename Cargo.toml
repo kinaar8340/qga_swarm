@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["crates/qga-swarm-convert", "crates/qga-swarm-preview"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+qga-gpu = { git = "https://github.com/kinaar8340/qga_gpu", rev = "b9c999406e266a585769a4804c6968de0e6d2237", default-features = false, features = ["headless", "capture"] }
+glam = "0.29"
+anyhow = "1"

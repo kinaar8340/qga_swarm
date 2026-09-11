@@ -1,0 +1,5 @@
+/target
+/output/mp4/*
+!/output/mp4/.gitkeep
+/results/
+**/__pycache__/

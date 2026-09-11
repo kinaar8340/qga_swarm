@@ -26,11 +26,22 @@ This repo consumes those dumps and four CPU wire generators.
 3. Lens       — helicoid / catenoid rulings, mid-plane orb as ∂p/∂t
 4. Refuse     — Hypothesis/Model card. Faceplate unused.
 
+## Layout
+
+    pins.toml
+    crates/qga-swarm-convert/
+    crates/qga-swarm-preview/
+    workers/{edges,s2,t2,k2,p2}.py
+    scripts/fleet_pack.sh
+    output/mp4/
+
 ## Run
 
-    # workers
-    ~/Playground/bin/fleet ping
-    ./scripts/fleet_pack.sh
+    python3 workers/s2.py --out /tmp/s2_edges.bin
+    ./scripts/fleet_pack.sh --local
+    cargo test -p qga-swarm-convert
+    cargo check -p qga-swarm-preview
+    cargo run -p qga-swarm-preview -- --headless --frames 8 --lines /tmp/s2_edges.bin
+    cargo run -p qga-swarm-preview -- --headless --frames 8 --lines /tmp/s2_edges.bin --capture output/mp4/
 
-    # bud
-    cargo run -p qga-swarm-preview --release -- --capture output/mp4/
+`--capture DIR` writes `last.bgra` only. No ffmpeg. Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.
