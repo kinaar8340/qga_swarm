@@ -119,6 +119,17 @@ Skeleton then skin (two films, glued at L5 freeze). Paint does not grow.
 
 `--beat caterpillar-grow` uploads new cylinder rings (3→13). No face hues.
 `--beat caterpillar-skin` fades species preview (black/gold/white) on the frozen L5 net.
+`--beat caterpillar-chaeta` instances scaled sites on that frozen net. Sites are orbs, not particles.
+
+    cargo run -p qga-swarm-preview --release -- \
+      --beat caterpillar-chaeta --headless --frames 96 --width 1920 --height 1080 \
+      --larva "$HOME/Projects/shellscan/output/recipe/setal-plexippus-cylinder/net.json" \
+      --chaeta "$HOME/Projects/shellscan/output/recipe/setal-plexippus-cylinder/chaetotaxy.json" \
+      --capture output/capture/caterpillar_chaeta
+    ./scripts/assemble_copy.sh --out output/mp4/caterpillar_chaetotaxy.mp4 \
+      output/capture/caterpillar_grow \
+      output/capture/caterpillar_skin \
+      output/capture/caterpillar_chaeta
     ./scripts/assemble_caterpillar.sh --out output/mp4/caterpillar_topology.mp4 \
       output/mp4/caterpillar_topology
 

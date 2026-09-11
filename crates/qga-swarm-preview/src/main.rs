@@ -8,10 +8,10 @@ use qga_gpu::{
     LineVert, Renderer, VisualState,
 };
 use qga_swarm_convert::{
-    catalog_line_verts, face_centroids, glam_edges, hexavalent_hubs,
+    catalog_line_verts, face_centroids, glam_edges, hexavalent_hubs, load_chaetotaxy,
     load_net_json, load_occupancy, load_qga_pixel_field, load_qgae, load_setal_sites,
-    nearest_section, pentavalent_hubs, CatalogSeg, Hub, OccupancyCard, PixelFace, SetalSite,
-    SECTION_HUE, SECTION_RGBA, SPECIES_RGBA,
+    nearest_section, pentavalent_hubs, CatalogSeg, ChaetaSite, Chaetotaxy, Hub, OccupancyCard,
+    PixelFace, SetalSite, SECTION_HUE, SECTION_RGBA, SPECIES_RGBA,
 };
 use std::path::{Path, PathBuf};
 
@@ -117,6 +117,7 @@ fn parse_args() -> Result<Args> {
     let mut beat: Option<String> = None;
     let mut field: Option<PathBuf> = None;
     let mut larva: Option<PathBuf> = None;
+    let mut chaeta: Option<PathBuf> = None;
     let mut compare: Option<PathBuf> = None;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -129,6 +130,7 @@ fn parse_args() -> Result<Args> {
             "--beat" => beat = Some(it.next().context("--beat NAME")?),
             "--field" => field = Some(PathBuf::from(it.next().context("--field PATH")?)),
             "--larva" => larva = Some(PathBuf::from(it.next().context("--larva PATH")?)),
+            "--chaeta" => chaeta = Some(PathBuf::from(it.next().context("--chaeta PATH")?)),
             "--compare" => compare = Some(PathBuf::from(it.next().context("--compare PATH")?)),
             "--s2" => named.push(Job {
                 path: PathBuf::from(it.next().context("--s2 PATH")?),
@@ -185,8 +187,9 @@ fn parse_args() -> Result<Args> {
         Some("caterpillar") => Some(Beat::Caterpillar),
         Some("caterpillar-grow") => Some(Beat::CaterpillarGrow),
         Some("caterpillar-skin") => Some(Beat::CaterpillarSkin),
+        Some("caterpillar-chaeta") => Some(Beat::CaterpillarChaeta),
         Some(other) => bail!(
-            "unknown --beat {other}; expected caterpillar, caterpillar-grow, or caterpillar-skin"
+            "unknown --beat {other}; expected caterpillar, caterpillar-grow, caterpillar-skin, or caterpillar-chaeta"
         ),
     };
     if larva.is_none() {
@@ -197,7 +200,12 @@ fn parse_args() -> Result<Args> {
     }
     if matches!(
         beat,
-        Some(Beat::CaterpillarGrow | Beat::CaterpillarSkin | Beat::Caterpillar)
+        Some(
+            Beat::CaterpillarGrow
+                | Beat::CaterpillarSkin
+                | Beat::Caterpillar
+                | Beat::CaterpillarChaeta,
+        )
     ) && larva.is_none()
     {
         bail!("--beat needs --larva PATH or --field PATH");
@@ -221,6 +229,7 @@ fn parse_args() -> Result<Args> {
         beat,
         field,
         larva,
+        chaeta,
         compare,
     })
 }
@@ -234,6 +243,7 @@ struct Args {
     beat: Option<Beat>,
     field: Option<PathBuf>,
     larva: Option<PathBuf>,
+    chaeta: Option<PathBuf>,
     compare: Option<PathBuf>,
 }
 
@@ -296,6 +306,21 @@ fn resolve_pixel_bin(field: Option<&Path>, dir: &Path) -> Option<PathBuf> {
     tries.into_iter().find(|p| p.is_file())
 }
 
+fn resolve_chaeta_path(raw: Option<&Path>, dir: &Path) -> Option<PathBuf> {
+    let mut tries = Vec::new();
+    if let Some(p) = raw {
+        tries.push(p.to_path_buf());
+        if let Ok(home) = std::env::var("HOME") {
+            let s = p.to_string_lossy().replace('\\', "/");
+            if let Some(rest) = s.strip_prefix("../shellscan/") {
+                tries.push(PathBuf::from(home).join("Projects/shellscan").join(rest));
+            }
+        }
+    }
+    tries.push(dir.join("chaetotaxy.json"));
+    tries.into_iter().find(|p| p.is_file())
+}
+
 fn init_gpu(width: u32, height: u32) -> Result<GpuContext> {
     GpuContext::init_headless_extent(width, height).context("init_headless")
 }
@@ -305,6 +330,7 @@ enum Beat {
     Caterpillar,
     CaterpillarGrow,
     CaterpillarSkin,
+    CaterpillarChaeta,
 }
 
 fn theta_capture_stem(path: &Path) -> String {
@@ -887,6 +913,9 @@ fn run_caterpillar(args: Args) -> Result<()> {
 }
 
 const BONE: Vec3 = Vec3::new(0.72, 0.72, 0.68);
+const R0: f32 = 0.022;
+const SIGMA: [f32; 5] = [0.45, 0.60, 0.75, 0.90, 1.00];
+const GROUP_FADE: [&str; 6] = ["XD", "D", "SD", "L", "SV", "V"];
 
 /// rings (segments), length along s, twist radians at end of instar.
 const INSTAR: [(u32, f32, f32); 5] = [
@@ -1019,6 +1048,181 @@ fn stamp_setal(
     }
 }
 
+fn cylinder_point(s: f32, phi_deg: f32, radius: f32, height: f32) -> Vec3 {
+    let z = 0.5 * height - s.clamp(0.0, 1.0) * height;
+    let psi = phi_deg.to_radians();
+    Vec3::new(radius * psi.cos(), radius * psi.sin(), z)
+}
+
+fn chart_point(s: f32, phi_deg: f32, height: f32) -> Vec3 {
+    let phi = phi_deg.abs().min(180.0);
+    Vec3::new(
+        2.35 + phi / 180.0 * 1.55,
+        0.0,
+        0.5 * height - s.clamp(0.0, 1.0) * height,
+    )
+}
+
+fn group_index(group: &str) -> usize {
+    GROUP_FADE.iter().position(|g| *g == group).unwrap_or(5)
+}
+
+fn site_color(site: &ChaetaSite) -> Vec3 {
+    let c = SECTION_RGBA[site.section()];
+    Vec3::new(c[0], c[1], c[2])
+}
+
+fn stamp_one_orb(renderer: &mut Renderer, p: Vec3, r: f32, col: Vec3, alpha: f32) {
+    let m = Mat4::from_translation(p) * Mat4::from_scale(Vec3::splat(r.max(0.006)));
+    renderer.draw_geodesic_orb_alpha(m, col, alpha.clamp(0.02, 1.0));
+}
+
+/// Rebuild orb instances only. Skeleton lines stay frozen on the chaeta reel.
+fn stamp_atlas(
+    renderer: &mut Renderer,
+    atlas: &Chaetotaxy,
+    instar: u8,
+    sigma: f32,
+    radius: f32,
+    height: f32,
+    alpha_scale: f32,
+    group_step: Option<(usize, f32)>,
+    allow_primary: bool,
+    allow_sub: bool,
+    allow_tentacle: bool,
+    allow_spiracle: bool,
+    tentacle_len: f32,
+    ticks: bool,
+    chart: bool,
+) -> Vec<[Vec3; 2]> {
+    let mut tent_segs = Vec::new();
+    let cyan = CYAN;
+    let gold = GOLD;
+    for site in &atlas.sites {
+        if site.instar > instar {
+            continue;
+        }
+        let mut alpha = alpha_scale;
+        match site.kind.as_str() {
+            "tentacle" if !allow_tentacle => continue,
+            "spiracle" if !allow_spiracle => continue,
+            "seta" => {
+                if site.primary() && !allow_primary {
+                    continue;
+                }
+                if site.subprimary() && !allow_sub {
+                    continue;
+                }
+                if !site.primary() && !site.subprimary() && !(allow_primary && allow_sub) {
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        if let Some((step, frac)) = group_step {
+            if site.kind == "seta" && site.primary() {
+                let gi = group_index(&site.group);
+                if gi > step {
+                    continue;
+                }
+                if gi == step {
+                    alpha *= frac;
+                }
+            }
+        }
+        let r = R0 * site.amp * sigma;
+        let phis: Vec<f32> = if site.mirror() {
+            vec![site.phi_deg, -site.phi_deg]
+        } else {
+            vec![site.phi_deg]
+        };
+        let col = site_color(site);
+        for &phi in &phis {
+            let p = cylinder_point(site.s, phi, radius, height);
+            if ticks {
+                if let Some(h) = site.phi_hinton {
+                    let hp = cylinder_point(site.s, if phi < 0.0 { -h } else { h }, radius, height);
+                    stamp_one_orb(renderer, hp, r * 0.7, cyan, alpha);
+                }
+                stamp_one_orb(renderer, p, r, gold, alpha);
+            } else {
+                stamp_one_orb(renderer, p, r, col, alpha);
+            }
+            if chart {
+                let q = chart_point(site.s, phi.abs(), height);
+                stamp_one_orb(renderer, q, r * 0.7, if ticks { gold } else { col }, alpha);
+                if ticks {
+                    if let Some(h) = site.phi_hinton {
+                        let hq = chart_point(site.s, h.abs(), height);
+                        stamp_one_orb(renderer, hq, r * 0.55, cyan, alpha);
+                    }
+                }
+            }
+            if tentacle_len > 1e-4 && site.kind == "tentacle" {
+                let radial = Vec3::new(phi.to_radians().cos(), phi.to_radians().sin(), 0.0);
+                tent_segs.push([p, p + radial * tentacle_len * site.amp * sigma]);
+            }
+        }
+    }
+    tent_segs
+}
+
+fn chart_frame(height: f32) -> Vec<[Vec3; 2]> {
+    let z0 = 0.5 * height;
+    let z1 = -0.5 * height;
+    let x0 = 2.35;
+    let x1 = 2.35 + 1.55;
+    vec![
+        [Vec3::new(x0, 0.0, z0), Vec3::new(x1, 0.0, z0)],
+        [Vec3::new(x0, 0.0, z1), Vec3::new(x1, 0.0, z1)],
+        [Vec3::new(x0, 0.0, z0), Vec3::new(x0, 0.0, z1)],
+        [Vec3::new(x1, 0.0, z0), Vec3::new(x1, 0.0, z1)],
+        [Vec3::new(x0, 0.0, z0), Vec3::new(x0, 0.0, z1)],
+    ]
+}
+
+fn chaeta_sheet(i: u32, frames: u32) -> (u8, f32) {
+    let n = frames.max(1);
+    let x = i as f32 * 96.0 / n as f32;
+    if x < 12.0 {
+        (0, (x / 12.0).clamp(0.0, 1.0))
+    } else if x < 36.0 {
+        (1, ((x - 12.0) / 24.0).clamp(0.0, 1.0))
+    } else if x < 48.0 {
+        (2, ((x - 36.0) / 12.0).clamp(0.0, 1.0))
+    } else if x < 60.0 {
+        (3, ((x - 48.0) / 12.0).clamp(0.0, 1.0))
+    } else if x < 72.0 {
+        (4, ((x - 60.0) / 12.0).clamp(0.0, 1.0))
+    } else if x < 84.0 {
+        (5, ((x - 72.0) / 12.0).clamp(0.0, 1.0))
+    } else {
+        (6, 1.0)
+    }
+}
+
+fn chaeta_hud(n: usize, rms: f32, order_ok: bool, beat: &str) -> Vec<HudVert> {
+    let mut v = plate_hud("SCALED CHAETOTAXY", None, beat, 0.0, true);
+    const INK: [f32; 4] = [0.92, 0.95, 1.00, 0.92];
+    const GOLD_A: [f32; 4] = [1.00, 0.78, 0.38, 0.95];
+    hud_text(&mut v, -0.94, 0.48, 0.012, &format!("SITES {n}x2"), INK);
+    hud_text(&mut v, -0.94, 0.42, 0.012, "ORDER D-SD-L-SV-V", INK);
+    hud_text(
+        &mut v,
+        -0.94,
+        0.36,
+        0.012,
+        &format!("DPHI RMS {:.1}", rms),
+        GOLD_A,
+    );
+    if !order_ok {
+        hud_text(&mut v, -0.20, 0.34, 0.016, "REFUSE", GOLD_A);
+    }
+    hud_text(&mut v, -0.20, 0.28, 0.012, "OPEN CYLINDER", INK);
+    hud_text(&mut v, -0.20, 0.22, 0.012, "NOT CHI=2", INK);
+    v
+}
+
 fn grow_hud(instar: &str, rings: u32, flash: bool) -> Vec<HudVert> {
     let beat = if flash {
         format!("{instar} MOLT")
@@ -1036,6 +1240,8 @@ fn run_grow(args: Args) -> Result<()> {
         .context("--beat caterpillar-grow needs --larva")?;
     let dir = resolve_catalog_dir(raw)?;
     let net = load_net_json(&dir.join("net.json")).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let atlas =
+        resolve_chaeta_path(args.chaeta.as_deref(), &dir).and_then(|p| load_chaetotaxy(&p).ok());
     let sites = load_setal_sites(&dir).unwrap_or_default();
     let n_phi = if net.n_phi == 0 { 36 } else { net.n_phi };
     let radius = if net.radius <= 0.0 { 1.0 } else { net.radius };
@@ -1113,18 +1319,40 @@ fn run_grow(args: Args) -> Result<()> {
             frozen_tent_only = tent_only;
         }
         if !flash {
-            stamp_setal(
-                &mut renderer,
-                &sites,
-                n_seg,
-                length,
-                twist,
-                radius,
-                height,
-                tent_only,
-                amp,
-                hub_alpha,
-            );
+            let instar = (stage + 1).clamp(1, 5);
+            let sigma = SIGMA[(instar as usize).saturating_sub(1)];
+            if let Some(atlas) = atlas.as_ref() {
+                stamp_atlas(
+                    &mut renderer,
+                    atlas,
+                    instar,
+                    sigma,
+                    radius,
+                    height,
+                    hub_alpha,
+                    None,
+                    true,
+                    true,
+                    true,
+                    true,
+                    0.0,
+                    false,
+                    false,
+                );
+            } else {
+                stamp_setal(
+                    &mut renderer,
+                    &sites,
+                    n_seg,
+                    length,
+                    twist,
+                    radius,
+                    height,
+                    tent_only,
+                    amp,
+                    hub_alpha,
+                );
+            }
         }
         renderer.write_particles(&gpu, &[])?;
         renderer.write_hud(
@@ -1281,6 +1509,193 @@ fn run_skin(args: Args) -> Result<()> {
     Ok(())
 }
 
+fn run_chaeta(args: Args) -> Result<()> {
+    let raw = args
+        .larva
+        .as_deref()
+        .or(args.field.as_deref())
+        .context("--beat caterpillar-chaeta needs --larva")?;
+    let dir = resolve_catalog_dir(raw)?;
+    let net = load_net_json(&dir.join("net.json")).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let chaeta_path = resolve_chaeta_path(args.chaeta.as_deref(), &dir)
+        .context("caterpillar-chaeta needs chaetotaxy.json")?;
+    let atlas = load_chaetotaxy(&chaeta_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let n_phi = if net.n_phi == 0 { 36 } else { net.n_phi };
+    let n_seg = if net.n_segments == 0 {
+        13
+    } else {
+        net.n_segments
+    };
+    let radius = if net.radius <= 0.0 { 1.0 } else { net.radius };
+    let height = if net.height <= 0.0 { 2.0 } else { net.height };
+
+    let mut gpu = init_gpu(args.width, args.height)?;
+    let mut renderer = Renderer::new(&gpu)?;
+    let mut camera = Camera::orbit(Vec3::new(1.05, 0.0, 0.0), 5.4);
+    camera.yaw = 0.22;
+    camera.pitch = 0.28;
+    camera.aspect = args.width as f32 / args.height as f32;
+    let mut vis = VisualState {
+        glow: 0.4,
+        pulse: 0.2,
+        tube_radius: 0.02,
+        zener: 2.4,
+        ..VisualState::default()
+    };
+
+    let frames = args.frames.max(1);
+    let capture_dir = args.capture.as_deref();
+    if let Some(d) = capture_dir {
+        std::fs::create_dir_all(d)?;
+    }
+
+    let bone = [BONE.x, BONE.y, BONE.z, 1.0];
+    let skeleton = instar_cylinder(n_seg, n_phi, 1.0, 0.0, radius, height);
+    let n_ring_edges = ((n_seg + 1) * n_phi) as usize;
+    let mut skin_verts = Vec::new();
+    for (k, [a, b]) in skeleton.iter().enumerate() {
+        let seg_i = if k < n_ring_edges {
+            (k as u32 / n_phi).min(n_seg.saturating_sub(1))
+        } else {
+            ((k - n_ring_edges) as u32 / n_phi).min(n_seg.saturating_sub(1))
+        };
+        let col = mix4(bone, SPECIES_RGBA[(seg_i % 3) as usize], 1.0);
+        skin_verts.push(LineVert {
+            pos: (*a).into(),
+            pad: 0.0,
+            color: col,
+        });
+        skin_verts.push(LineVert {
+            pos: (*b).into(),
+            pad: 0.0,
+            color: col,
+        });
+    }
+    for [a, b] in chart_frame(height) {
+        let col = [0.45, 0.45, 0.48, 1.0];
+        skin_verts.push(LineVert {
+            pos: a.into(),
+            pad: 0.0,
+            color: col,
+        });
+        skin_verts.push(LineVert {
+            pos: b.into(),
+            pad: 0.0,
+            color: col,
+        });
+    }
+    renderer.update_line_verts(&gpu, &skin_verts);
+
+    let n_sites = atlas.sites.len();
+    let refuse_order = !atlas.phi_order_ok;
+
+    for i in 0..frames {
+        let (phase, frac) = chaeta_sheet(i, frames);
+        let time = i as f32 / 24.0;
+        vis.pulse = 0.5 + 0.5 * time.sin();
+
+        let (prim, sub, tent, spir, step, tlen, ticks, beat) = if refuse_order && phase >= 1 {
+            (
+                true,
+                false,
+                false,
+                false,
+                Some((0usize, 1.0)),
+                0.0,
+                false,
+                "REFUSE",
+            )
+        } else {
+            match phase {
+                0 => (false, false, false, false, None, 0.0, false, "SKIN HOLD"),
+                1 => {
+                    let g = (frac * 6.0).floor() as usize;
+                    let f = (frac * 6.0).fract().max(0.15);
+                    (
+                        true,
+                        false,
+                        false,
+                        false,
+                        Some((g.min(5), f)),
+                        0.0,
+                        false,
+                        "PRIMARIES",
+                    )
+                }
+                2 => (true, true, false, false, None, 0.0, false, "SUBPRIMARY"),
+                3 => (
+                    true,
+                    true,
+                    true,
+                    false,
+                    None,
+                    0.22 * frac,
+                    false,
+                    "TENTACLE",
+                ),
+                4 => (true, true, true, true, None, 0.22, false, "SPIRACLE"),
+                5 => (true, true, true, true, None, 0.22, true, "DPHI TICK"),
+                _ => (true, true, true, true, None, 0.22, true, "HOLD"),
+            }
+        };
+
+        let tent_segs = stamp_atlas(
+            &mut renderer,
+            &atlas,
+            5,
+            1.0,
+            radius,
+            height,
+            1.0,
+            step,
+            prim,
+            sub,
+            tent,
+            spir,
+            tlen,
+            ticks,
+            true,
+        );
+        let mut verts = skin_verts.clone();
+        for [a, b] in &tent_segs {
+            let col = [GOLD.x, GOLD.y, GOLD.z, 1.0];
+            verts.push(LineVert {
+                pos: (*a).into(),
+                pad: 0.0,
+                color: col,
+            });
+            verts.push(LineVert {
+                pos: (*b).into(),
+                pad: 0.0,
+                color: col,
+            });
+        }
+        if !tent_segs.is_empty() {
+            renderer.update_line_verts(&gpu, &verts);
+        } else if phase == 0 {
+            renderer.update_line_verts(&gpu, &skin_verts);
+        }
+        renderer.write_particles(&gpu, &[])?;
+        renderer.write_hud(
+            &gpu,
+            &chaeta_hud(n_sites, atlas.dphi_rms, atlas.phi_order_ok, beat),
+        )?;
+        let grab = capture_dir.is_some();
+        if let Some(frame) = renderer.render(&mut gpu, &camera, &vis, time, grab)? {
+            if let Some(d) = capture_dir {
+                write_bgra(
+                    d,
+                    &format!("frame_{i:04}"),
+                    &frame.bgra,
+                    frame.width,
+                    frame.height,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     print_claim_banner("homology remesh / inner_cone film");
     let args = parse_args()?;
@@ -1288,6 +1703,7 @@ fn main() -> Result<()> {
         Some(Beat::Caterpillar) => run_caterpillar(args),
         Some(Beat::CaterpillarGrow) => run_grow(args),
         Some(Beat::CaterpillarSkin) => run_skin(args),
+        Some(Beat::CaterpillarChaeta) => run_chaeta(args),
         None => run_stills(args),
     }
 }

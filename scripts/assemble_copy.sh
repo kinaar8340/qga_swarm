@@ -5,9 +5,10 @@ FFMPEG="/usr/bin/ffmpeg"
 OUT="$ROOT/output/mp4/caterpillar_copy.mp4"
 FPS=24
 HOLD_S=1
+HOLD_FRAMES=12
 
 usage() {
-  echo "usage: assemble_copy.sh [--out PATH] GROW_DIR SKIN_DIR" >&2
+  echo "usage: assemble_copy.sh [--out PATH] GROW_DIR SKIN_DIR [CHAETA_DIR]" >&2
   exit 2
 }
 
@@ -40,16 +41,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ${#dirs[@]} -ne 2 ]]; then
+if [[ ${#dirs[@]} -lt 2 ]]; then
   usage
 fi
 
-GROW="${dirs[0]}"
-SKIN="${dirs[1]}"
-
 echo "claims=Software fact  not_a_proof_of=homology remesh / inner_cone film"
 echo "catalog cannot prove it captured the occupant"
-echo "skeleton then skin; paint does not grow"
+echo "skeleton then skin then sites; paint does not grow"
 
 parse_txt() {
   local txt="$1"
@@ -84,16 +82,12 @@ collect() {
   printf '%s\n' "${frames[@]}"
 }
 
-grow_frames=()
+first_frames=()
 while IFS= read -r line; do
-  grow_frames+=("$line")
-done < <(collect "$GROW")
-skin_frames=()
-while IFS= read -r line; do
-  skin_frames+=("$line")
-done < <(collect "$SKIN")
+  first_frames+=("$line")
+done < <(collect "${dirs[0]}")
 
-wh="$(parse_txt "${grow_frames[0]%.bgra}.txt")"
+wh="$(parse_txt "${first_frames[0]%.bgra}.txt")"
 width="${wh%% *}"
 height="${wh##* }"
 
@@ -112,16 +106,28 @@ dump() {
   i=$((i + 1))
 }
 
-for bgra in "${grow_frames[@]}"; do
-  dump "$bgra"
-done
-hold=$((HOLD_S * FPS))
-last="${grow_frames[-1]}"
-for _ in $(seq 1 "$hold"); do
-  dump "$last"
-done
-for bgra in "${skin_frames[@]}"; do
-  dump "$bgra"
+hold_n=$HOLD_FRAMES
+if [[ ${#dirs[@]} -eq 2 ]]; then
+  hold_n=$((HOLD_S * FPS))
+fi
+
+di=0
+prev_last=""
+for dir in "${dirs[@]}"; do
+  frames=()
+  while IFS= read -r line; do
+    frames+=("$line")
+  done < <(collect "$dir")
+  if [[ $di -gt 0 ]]; then
+    for _ in $(seq 1 "$hold_n"); do
+      dump "$prev_last"
+    done
+  fi
+  for bgra in "${frames[@]}"; do
+    dump "$bgra"
+  done
+  prev_last="${frames[-1]}"
+  di=$((di + 1))
 done
 
 mkdir -p "$(dirname "$OUT")"

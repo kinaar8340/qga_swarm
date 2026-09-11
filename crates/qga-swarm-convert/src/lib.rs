@@ -101,6 +101,60 @@ pub struct SetalSite {
     pub tentacle: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChaetaSite {
+    pub id: String,
+    pub segment: String,
+    pub seta: String,
+    pub s: f32,
+    pub phi_deg: f32,
+    pub amp: f32,
+    pub group: String,
+    pub kind: String,
+    pub instar: u8,
+    pub phi_hinton: Option<f32>,
+    pub phi_measured: Option<f32>,
+}
+
+impl ChaetaSite {
+    pub fn section(&self) -> usize {
+        match self.group.as_str() {
+            "XD" | "D" => 0,
+            "SD" => 1,
+            "L" => 2,
+            "SV" | "V" => 3,
+            _ => match self.kind.as_str() {
+                "tentacle" | "spiracle" => 1,
+                _ => 0,
+            },
+        }
+    }
+
+    pub fn primary(&self) -> bool {
+        matches!(
+            self.seta.as_str(),
+            "XD1" | "XD2" | "D1" | "D2" | "SD1" | "L1" | "SV1" | "V1"
+        ) && self.kind == "seta"
+    }
+
+    pub fn subprimary(&self) -> bool {
+        matches!(self.seta.as_str(), "SD2" | "L2" | "L3" | "SV2" | "SV3")
+    }
+
+    pub fn mirror(&self) -> bool {
+        !self.seta.starts_with('V') && self.group != "V"
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Chaetotaxy {
+    pub n_phi: u32,
+    pub rings_l5: u32,
+    pub dphi_rms: f32,
+    pub phi_order_ok: bool,
+    pub sites: Vec<ChaetaSite>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CatalogSeg {
     pub a: [f32; 3],
@@ -388,6 +442,70 @@ pub fn catalog_line_verts_palette(
     Ok(out)
 }
 
+fn json_f32(v: &serde_json::Value) -> Option<f32> {
+    v.as_f64().map(|x| x as f32)
+}
+
+pub fn parse_chaetotaxy(text: &str) -> Result<Chaetotaxy, ConvertError> {
+    let v: serde_json::Value = serde_json::from_str(text).map_err(json_err)?;
+    let arr = v
+        .get("sites")
+        .and_then(|x| x.as_array())
+        .ok_or(ConvertError::BadNet("chaetotaxy sites"))?;
+    let mut sites = Vec::with_capacity(arr.len());
+    for rec in arr {
+        let instar = rec.get("instar").and_then(|x| x.as_u64()).unwrap_or(5) as u8;
+        sites.push(ChaetaSite {
+            id: rec
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            segment: rec
+                .get("segment")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            seta: rec
+                .get("seta")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            s: json_f32(rec.get("s").unwrap_or(&serde_json::Value::Null)).unwrap_or(0.5),
+            phi_deg: json_f32(rec.get("phi_deg").unwrap_or(&serde_json::Value::Null))
+                .unwrap_or(0.0),
+            amp: json_f32(rec.get("amp").unwrap_or(&serde_json::Value::Null)).unwrap_or(1.0),
+            group: rec
+                .get("group")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            kind: rec
+                .get("kind")
+                .and_then(|x| x.as_str())
+                .unwrap_or("seta")
+                .to_string(),
+            instar: instar.clamp(1, 5),
+            phi_hinton: rec.get("phi_hinton").and_then(json_f32),
+            phi_measured: rec.get("phi_measured").and_then(json_f32),
+        });
+    }
+    Ok(Chaetotaxy {
+        n_phi: v.get("n_phi").and_then(|x| x.as_u64()).unwrap_or(36) as u32,
+        rings_l5: v.get("rings_l5").and_then(|x| x.as_u64()).unwrap_or(13) as u32,
+        dphi_rms: json_f32(v.get("dphi_rms").unwrap_or(&serde_json::Value::Null)).unwrap_or(0.0),
+        phi_order_ok: v
+            .get("phi_order_ok")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(true),
+        sites,
+    })
+}
+
+pub fn load_chaetotaxy(path: &Path) -> Result<Chaetotaxy, ConvertError> {
+    parse_chaetotaxy(&std::fs::read_to_string(path)?)
+}
+
 pub fn load_setal_sites(dir: &Path) -> Result<Vec<SetalSite>, ConvertError> {
     let log_path = dir.join("setal_log.json");
     let painted_path = dir.join("painted.json");
@@ -599,5 +717,36 @@ mod tests {
         assert!(SPECIES_RGBA[0][0] < 0.15);
         assert!(SPECIES_RGBA[2][0] > 0.8);
         assert_eq!(SECTION_RGBA.len(), SPECIES_RGBA.len());
+    }
+
+    #[test]
+    fn chaetotaxy_roundtrip_one_site() {
+        let t = r#"{
+            "n_phi": 36,
+            "rings_l5": 13,
+            "phi_order_ok": true,
+            "dphi_rms": 4.2,
+            "sites": [{
+                "id": "T2.D1",
+                "segment": "T2",
+                "seta": "D1",
+                "s": 0.18,
+                "phi_deg": 10,
+                "amp": 0.7,
+                "group": "D",
+                "kind": "seta",
+                "instar": 2,
+                "phi_hinton": 10,
+                "phi_measured": 12
+            }]
+        }"#;
+        let a = parse_chaetotaxy(t).unwrap();
+        assert_eq!(a.n_phi, 36);
+        assert_eq!(a.sites.len(), 1);
+        assert_eq!(a.sites[0].instar, 2);
+        assert_eq!(a.sites[0].section(), 0);
+        assert!(a.sites[0].primary());
+        assert!(a.sites[0].mirror());
+        assert!((a.dphi_rms - 4.2).abs() < 1e-6);
     }
 }

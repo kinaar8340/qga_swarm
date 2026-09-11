@@ -79,6 +79,8 @@ Workers never open a GpuContext.
 - Instar growth is a ring schedule on an open cylinder. Paint wraps a frozen L5 net.
   Do not grow a textured mesh. Species rgb_preview (black/gold/white/magenta) is a
   witness of the same four bins, not a fifth hue.
+- Scaled chaetotaxy is a map of published sites on the finished cylinder. Sites are
+  geodesic orbs (table-sized), not GpuParticle. Do not parse YAML in the preview loop.
 
 Binaries print claims=Software fact.
 
