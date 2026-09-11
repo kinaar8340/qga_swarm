@@ -190,8 +190,9 @@ fn parse_args() -> Result<Args> {
         Some("caterpillar-grow") => Some(Beat::CaterpillarGrow),
         Some("caterpillar-skin") => Some(Beat::CaterpillarSkin),
         Some("caterpillar-chaeta") => Some(Beat::CaterpillarChaeta),
+        Some("hang-chrysalis") => Some(Beat::HangChrysalis),
         Some(other) => bail!(
-            "unknown --beat {other}; expected caterpillar, caterpillar-grow, caterpillar-skin, or caterpillar-chaeta"
+            "unknown --beat {other}; expected caterpillar, caterpillar-grow, caterpillar-skin, caterpillar-chaeta, or hang-chrysalis"
         ),
     };
     if larva.is_none() {
@@ -206,7 +207,8 @@ fn parse_args() -> Result<Args> {
             Beat::CaterpillarGrow
                 | Beat::CaterpillarSkin
                 | Beat::Caterpillar
-                | Beat::CaterpillarChaeta,
+                | Beat::CaterpillarChaeta
+                | Beat::HangChrysalis,
         )
     ) && larva.is_none()
     {
@@ -352,6 +354,7 @@ enum Beat {
     CaterpillarGrow,
     CaterpillarSkin,
     CaterpillarChaeta,
+    HangChrysalis,
 }
 
 fn theta_capture_stem(path: &Path) -> String {
@@ -397,6 +400,39 @@ fn edges_to_verts(edges: &[[Vec3; 2]], color: Vec3) -> Vec<LineVert> {
             ]
         })
         .collect()
+}
+
+fn net_bone_verts(net: &qga_swarm_convert::Net, alpha: f32) -> Vec<LineVert> {
+    let a = alpha.clamp(0.0, 1.0);
+    let col = [BONE.x * a, BONE.y * a, BONE.z * a, 1.0];
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for ring in &net.faces {
+        if ring.len() < 2 {
+            continue;
+        }
+        for k in 0..ring.len() {
+            let i = ring[k];
+            let j = ring[(k + 1) % ring.len()];
+            let key = if i <= j { (i, j) } else { (j, i) };
+            if !seen.insert(key) {
+                continue;
+            }
+            let pa = net.verts.get(i as usize).copied().unwrap_or([0.0; 3]);
+            let pb = net.verts.get(j as usize).copied().unwrap_or([0.0; 3]);
+            out.push(LineVert {
+                pos: pa,
+                pad: 0.0,
+                color: col,
+            });
+            out.push(LineVert {
+                pos: pb,
+                pad: 0.0,
+                color: col,
+            });
+        }
+    }
+    out
 }
 
 fn catalog_to_verts(segs: &[CatalogSeg], alpha: f32) -> Vec<LineVert> {
@@ -1876,6 +1912,243 @@ fn run_chaeta(args: Args) -> Result<()> {
     Ok(())
 }
 
+fn hang_sheet(i: u32, frames: u32) -> (u8, f32) {
+    let n = frames.max(1);
+    let x = i as f32 * 120.0 / n as f32;
+    if x < 12.0 {
+        (0, (x / 12.0).clamp(0.0, 1.0))
+    } else if x < 36.0 {
+        (1, ((x - 12.0) / 24.0).clamp(0.0, 1.0))
+    } else if x < 72.0 {
+        (2, ((x - 36.0) / 36.0).clamp(0.0, 1.0))
+    } else if x < 96.0 {
+        (3, ((x - 72.0) / 24.0).clamp(0.0, 1.0))
+    } else if x < 108.0 {
+        (4, ((x - 96.0) / 12.0).clamp(0.0, 1.0))
+    } else {
+        (5, 1.0)
+    }
+}
+
+fn hang_hud(beat: &str, chi2: bool) -> Vec<HudVert> {
+    const PANEL: [f32; 4] = [0.02, 0.04, 0.08, 0.72];
+    const INK: [f32; 4] = [0.92, 0.95, 1.00, 0.92];
+    const GOLD_A: [f32; 4] = [1.00, 0.78, 0.38, 0.95];
+    let mut v = Vec::new();
+    hud_quad(&mut v, -0.96, 0.50, -0.38, 0.94, PANEL);
+    hud_text(&mut v, -0.94, 0.90, 0.016, "HANG CHRYSALIS", GOLD_A);
+    hud_text(&mut v, -0.94, 0.84, 0.014, "MODEL", INK);
+    hud_text(&mut v, -0.94, 0.78, 0.014, "PAINT NONE", INK);
+    hud_text(&mut v, -0.94, 0.72, 0.014, "NOT OCEAN", INK);
+    hud_text(&mut v, -0.94, 0.66, 0.014, "FACEPLATE UNUSED", INK);
+    if chi2 {
+        hud_text(&mut v, -0.94, 0.60, 0.014, "CHI=2", GOLD_A);
+        hud_text(&mut v, -0.94, 0.54, 0.012, "T=9 GOLDBERG", INK);
+    } else {
+        hud_text(&mut v, -0.94, 0.60, 0.014, "OPEN", GOLD_A);
+        hud_text(&mut v, -0.94, 0.54, 0.012, "NOT CHI=2", INK);
+    }
+    hud_quad(&mut v, 0.38, 0.50, 0.96, 0.94, PANEL);
+    hud_text(&mut v, 0.40, 0.90, 0.016, "REFUSE", GOLD_A);
+    hud_text(&mut v, 0.40, 0.84, 0.014, "HYPOTHESIS / MODEL", INK);
+    hud_text(&mut v, 0.40, 0.78, 0.014, "PAINT NONE", INK);
+    hud_text(&mut v, 0.40, 0.72, 0.014, "CATALOG CANNOT", INK);
+    hud_text(&mut v, 0.40, 0.66, 0.014, "PROVE OCCUPANT", INK);
+    hud_text(&mut v, 0.40, 0.60, 0.012, "NOT MORPHOGENESIS", INK);
+    hud_text(&mut v, -0.20, 0.46, 0.014, beat, GOLD_A);
+    v
+}
+
+fn run_hang(args: Args) -> Result<()> {
+    let raw = args
+        .larva
+        .as_deref()
+        .or(args.field.as_deref())
+        .context("--beat hang-chrysalis needs --larva")?;
+    let dir = resolve_catalog_dir(raw)?;
+    let net = load_net_json(&dir.join("net.json")).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let pent = pentavalent_hubs(&net);
+    let goldberg = net_bone_verts(&net, 1.0);
+    let hel = job_edges(&args.jobs, Bin::Helicoid).unwrap_or_default();
+    let cage = job_edges(&args.jobs, Bin::Hyperboloid).unwrap_or_else(|_| hyperboloid_edges(32));
+
+    let atlas = resolve_chaeta_path(args.chaeta.as_deref(), &dir)
+        .or_else(|| {
+            if let Ok(home) = std::env::var("HOME") {
+                let p = PathBuf::from(home).join(
+                    "Projects/shellscan/output/recipe/setal-plexippus-cylinder/chaetotaxy.json",
+                );
+                p.is_file().then_some(p)
+            } else {
+                None
+            }
+        })
+        .and_then(|p| load_chaetotaxy(&p).ok());
+
+    let mut gpu = init_gpu(args.width, args.height)?;
+    let mut renderer = Renderer::new(&gpu)?;
+    let mut camera = Camera::orbit(Vec3::ZERO, 4.8);
+    camera.aspect = args.width as f32 / args.height as f32;
+    let mut vis = VisualState {
+        glow: 0.4,
+        pulse: 0.2,
+        tube_radius: 0.02,
+        zener: 2.4,
+        ..VisualState::default()
+    };
+
+    let frames = args.frames.max(1);
+    let capture_dir = args.capture.as_deref();
+    if let Some(d) = capture_dir {
+        std::fs::create_dir_all(d)?;
+    }
+
+    let cylinder = instar_cylinder(13, 36, 1.0, 0.0, 1.0, 2.0);
+    let mut frozen_verts: Vec<LineVert> = Vec::new();
+    let mut frozen_chi2 = false;
+    let mut frozen_beat = "HOLD";
+
+    for i in 0..frames {
+        let (phase, frac) = hang_sheet(i, frames);
+        let time = i as f32 / 24.0;
+        vis.pulse = 0.5 + 0.5 * time.sin();
+        let refuse = phase == 5;
+
+        let (theta, cyl_a, hel_a, gold_on, hubs_on, cage_on, site_a, chi2, beat) = if refuse {
+            (
+                std::f32::consts::FRAC_PI_2,
+                0.05,
+                0.0,
+                true,
+                true,
+                true,
+                0.0,
+                frozen_chi2,
+                frozen_beat,
+            )
+        } else {
+            match phase {
+                0 => (0.0, 1.0, 0.0, false, false, false, 1.0, false, "L5 OPEN"),
+                1 => (0.0, 1.0, frac, false, false, false, 1.0, false, "HELICOID"),
+                2 => (
+                    theta_of(frac),
+                    (1.0 - frac).max(0.05),
+                    1.0,
+                    false,
+                    false,
+                    false,
+                    (1.0 - frac).max(0.0),
+                    false,
+                    "ASSOCIATE",
+                ),
+                3 => (
+                    theta_of(1.0),
+                    0.05,
+                    0.0,
+                    true,
+                    true,
+                    false,
+                    0.0,
+                    true,
+                    "T=9 CLOSE",
+                ),
+                _ => (
+                    theta_of(1.0),
+                    0.05,
+                    0.0,
+                    true,
+                    true,
+                    true,
+                    0.0,
+                    true,
+                    "CAGE",
+                ),
+            }
+        };
+
+        let mut verts: Vec<LineVert> = Vec::new();
+        if cyl_a > 1e-4 {
+            verts.extend(edges_to_verts(&cylinder, BONE * cyl_a));
+        }
+        if hel_a > 1e-4 {
+            if hel.is_empty() {
+                verts.extend(associate_line_verts(theta, 48));
+            } else if phase == 2 {
+                verts.extend(associate_line_verts(theta, 48));
+            } else {
+                let col = CYAN * hel_a + BONE * (1.0 - hel_a);
+                verts.extend(edges_to_verts(&hel, col));
+            }
+        }
+        if gold_on {
+            verts.extend(goldberg.clone());
+        }
+        if cage_on {
+            verts.extend(edges_to_verts(&cage, GOLD * 0.55));
+        }
+
+        if refuse {
+            renderer.update_line_verts(&gpu, &frozen_verts);
+        } else {
+            renderer.update_line_verts(&gpu, &verts);
+            frozen_verts = verts;
+            frozen_chi2 = chi2;
+            frozen_beat = beat;
+        }
+
+        if hubs_on {
+            for h in &pent {
+                let m = Mat4::from_translation(glam::Vec3::from(h.pos))
+                    * Mat4::from_scale(Vec3::splat(h.radius.max(0.04)));
+                renderer.draw_geodesic_orb_alpha(m, CYAN, 1.0);
+            }
+        }
+        if phase == 2 || (refuse && frozen_beat == "ASSOCIATE") {
+            let (m, a) = midplane_orb(theta);
+            renderer.draw_geodesic_orb_alpha(m, GOLD, a);
+        }
+
+        if let Some(atlas) = atlas.as_ref() {
+            if site_a > 0.02 {
+                let _ = stamp_atlas(
+                    &mut renderer,
+                    atlas,
+                    5,
+                    1.0,
+                    1.0,
+                    2.0,
+                    site_a,
+                    None,
+                    true,
+                    true,
+                    true,
+                    false,
+                    site_a,
+                    false,
+                    false,
+                    false,
+                );
+            }
+        }
+
+        renderer.write_particles(&gpu, &[])?;
+        renderer.write_hud(&gpu, &hang_hud(beat, chi2))?;
+        let grab = capture_dir.is_some();
+        if let Some(frame) = renderer.render(&mut gpu, &camera, &vis, time, grab)? {
+            if let Some(d) = capture_dir {
+                write_bgra(
+                    d,
+                    &format!("frame_{i:04}"),
+                    &frame.bgra,
+                    frame.width,
+                    frame.height,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     print_claim_banner("homology remesh / inner_cone film");
     let args = parse_args()?;
@@ -1884,6 +2157,7 @@ fn main() -> Result<()> {
         Some(Beat::CaterpillarGrow) => run_grow(args),
         Some(Beat::CaterpillarSkin) => run_skin(args),
         Some(Beat::CaterpillarChaeta) => run_chaeta(args),
+        Some(Beat::HangChrysalis) => run_hang(args),
         None => run_stills(args),
     }
 }

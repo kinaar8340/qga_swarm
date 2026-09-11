@@ -81,6 +81,8 @@ Workers never open a GpuContext.
   witness of the same four bins, not a fifth hue.
 - Scaled chaetotaxy is a map of published sites on the finished cylinder. Sites are
   geodesic orbs (table-sized), not GpuParticle. Do not parse YAML in the preview loop.
+- hang-chrysalis is a Model close (χ=2, paint none). Do not snap setae onto Goldberg
+  faces. Do not recut the chaetotaxy strip. Recipe is not morphogenesis.
 
 Binaries print claims=Software fact.
 

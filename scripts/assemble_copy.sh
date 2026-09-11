@@ -8,7 +8,7 @@ HOLD_S=1
 HOLD_FRAMES=12
 
 usage() {
-  echo "usage: assemble_copy.sh [--out PATH] GROW_DIR SKIN_DIR [CHAETA_DIR]" >&2
+  echo "usage: assemble_copy.sh [--out PATH] DIR [DIR ...]" >&2
   exit 2
 }
 
@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ${#dirs[@]} -lt 2 ]]; then
+if [[ ${#dirs[@]} -lt 1 ]]; then
   usage
 fi
 

@@ -131,6 +131,17 @@ Skeleton then skin (two films, glued at L5 freeze). Paint does not grow.
       output/capture/caterpillar_skin \
       output/capture/caterpillar_chaeta
 
+`--beat hang-chrysalis` is a new reel: Goldberg T=9 close, paint none, χ=2. Not a recut of chaetotaxy.
+
+    cargo run -p qga-swarm-preview --release -- \
+      --beat hang-chrysalis --headless --frames 120 --width 1920 --height 1080 \
+      --helicoid results/local/helicoid_edges.bin \
+      --catenoid results/local/catenoid_edges.bin \
+      --larva "$HOME/Projects/shellscan/output/recipe/hang-chrysalis/net.json" \
+      --capture output/capture/hang_chrysalis
+    ./scripts/assemble_copy.sh --out output/mp4/hang_chrysalis.mp4 \
+      output/capture/hang_chrysalis
+
 Same beat, other tables. `--frames 24` is L5 hold + Δφ ticks only. Not a fourth topology.
 
     for spec in plexippus-cylinder hinton-cylinder danaus-gilippus melpomene-cylinder polyxenes-cylinder; do
