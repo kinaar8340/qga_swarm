@@ -55,4 +55,17 @@ This repo consumes those dumps and four CPU wire generators.
       --catenoid results/local/catenoid_edges.bin \
       --capture /tmp/qga_swarm_hc
 
-Four named flags → `{s2,t2,k2,p2}.bgra` under `--capture`. `--helicoid`/`--catenoid` → `{helicoid,catenoid}.bgra`. `--lines` alone → `last.bgra` (cyan unless the stem is s2|t2|k2|p2|helicoid|catenoid). `--local` writes homology plus H/C QGAE. Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.
+Four named flags → `{s2,t2,k2,p2}.bgra` under `--capture`. `--helicoid`/`--catenoid` → `{helicoid,catenoid}.bgra`. `--lines` alone → `last.bgra` (cyan unless the stem is s2|t2|k2|p2|helicoid|catenoid). `--local` writes homology plus H/C QGAE.
+
+    cargo run -p qga-swarm-preview -- --headless --frames 8 \
+      --s2 results/local/s2_edges.bin \
+      --t2 results/local/t2_edges.bin \
+      --k2 results/local/k2_edges.bin \
+      --p2 results/local/p2_edges.bin \
+      --helicoid results/local/helicoid_edges.bin \
+      --catenoid results/local/catenoid_edges.bin \
+      --capture /tmp/qga_swarm_cat
+    ./scripts/assemble_catalog.sh --out output/mp4/assemble_catalog.mp4 \
+      /tmp/qga_swarm_cat
+
+Sidecar MP4 is not occupant proof. Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.
