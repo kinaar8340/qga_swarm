@@ -109,6 +109,8 @@ struct Mote {
 
 fn parse_args() -> Result<Args> {
     let mut frames = 1u32;
+    let mut width = 1920u32;
+    let mut height = 1080u32;
     let mut named: Vec<Job> = Vec::new();
     let mut lines: Vec<PathBuf> = Vec::new();
     let mut capture: Option<PathBuf> = None;
@@ -121,9 +123,16 @@ fn parse_args() -> Result<Args> {
         match a.as_str() {
             "--headless" => headless = true,
             "--frames" => frames = it.next().context("--frames N")?.parse()?,
+            "--width" => width = it.next().context("--width N")?.parse()?,
+            "--height" => height = it.next().context("--height N")?.parse()?,
             "--capture" => capture = Some(PathBuf::from(it.next().context("--capture DIR")?)),
             "--beat" => beat = Some(it.next().context("--beat NAME")?),
-            "--field" => field = Some(PathBuf::from(it.next().context("--field DIR")?)),
+            "--field" | "--larva" => {
+                if field.is_some() {
+                    bail!("do not mix --field and --larva");
+                }
+                field = Some(PathBuf::from(it.next().context("--field/--larva PATH")?));
+            }
             "--compare" => compare = Some(PathBuf::from(it.next().context("--compare PATH")?)),
             "--s2" => named.push(Job {
                 path: PathBuf::from(it.next().context("--s2 PATH")?),
@@ -195,6 +204,8 @@ fn parse_args() -> Result<Args> {
     });
     Ok(Args {
         frames: frames.max(1),
+        width: width.max(1),
+        height: height.max(1),
         jobs,
         capture,
         beat,
@@ -205,11 +216,58 @@ fn parse_args() -> Result<Args> {
 
 struct Args {
     frames: u32,
+    width: u32,
+    height: u32,
     jobs: Vec<Job>,
     capture: Option<PathBuf>,
     beat: Option<Beat>,
     field: Option<PathBuf>,
     compare: Option<PathBuf>,
+}
+
+/// `--larva` may be a recipe dir or `net.json`. `../shellscan/...` from
+/// Playground is the Projects sibling, not a Playground checkout.
+fn resolve_catalog_dir(raw: &Path) -> Result<PathBuf> {
+    let mut tries = vec![raw.to_path_buf()];
+    if let Ok(home) = std::env::var("HOME") {
+        let s = raw.to_string_lossy().replace('\\', "/");
+        let rest = s
+            .strip_prefix("../shellscan/")
+            .or_else(|| s.strip_prefix("~/Projects/shellscan/"));
+        if let Some(rest) = rest {
+            tries.push(PathBuf::from(&home).join("Projects/shellscan").join(rest));
+        }
+        if raw.file_name().and_then(|n| n.to_str()) == Some("net.json") {
+            if let Some(name) = raw.parent().and_then(|p| p.file_name()) {
+                tries.push(
+                    PathBuf::from(&home)
+                        .join("Projects/shellscan/output/recipe")
+                        .join(name)
+                        .join("net.json"),
+                );
+            }
+        }
+    }
+    for t in &tries {
+        let dir = if t.is_file() {
+            t.parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| t.clone())
+        } else {
+            t.clone()
+        };
+        if dir.join("net.json").is_file() && dir.join("qga_pixel_field.bin").is_file() {
+            return Ok(dir);
+        }
+    }
+    bail!(
+        "catalog dump not found at {} (need net.json + qga_pixel_field.bin)",
+        raw.display()
+    )
+}
+
+fn init_gpu(width: u32, height: u32) -> Result<GpuContext> {
+    GpuContext::init_headless_extent(width, height).context("init_headless")
 }
 
 #[derive(Clone, Copy)]
@@ -468,9 +526,10 @@ fn job_edges(jobs: &[Job], want: Bin) -> Result<Vec<[Vec3; 2]>> {
 
 fn run_stills(args: Args) -> Result<()> {
     let multi = args.jobs.len() > 1;
-    let mut gpu = GpuContext::init_headless().context("init_headless")?;
+    let mut gpu = init_gpu(args.width, args.height)?;
     let mut renderer = Renderer::new(&gpu)?;
-    let camera = Camera::orbit(Vec3::ZERO, 4.2);
+    let mut camera = Camera::orbit(Vec3::ZERO, 4.2);
+    camera.aspect = args.width as f32 / args.height as f32;
     let vis = VisualState {
         glow: 0.4,
         pulse: 0.2,
@@ -507,11 +566,12 @@ fn run_stills(args: Args) -> Result<()> {
 }
 
 fn run_caterpillar(args: Args) -> Result<()> {
-    let field = args
+    let field_raw = args
         .field
         .as_deref()
-        .context("--beat caterpillar needs --field DIR")?;
-    let cat = load_catalog(field)?;
+        .context("--beat caterpillar needs --field DIR or --larva PATH")?;
+    let field = resolve_catalog_dir(field_raw)?;
+    let cat = load_catalog(&field)?;
     let occ = match args.compare.as_deref() {
         Some(p) => Some(load_occupancy(p).map_err(|e| anyhow::anyhow!("{e}"))?),
         None => None,
@@ -523,11 +583,12 @@ fn run_caterpillar(args: Args) -> Result<()> {
     let p2 = job_edges(&args.jobs, Bin::P2).unwrap_or_default();
     let hel = job_edges(&args.jobs, Bin::Helicoid).unwrap_or_default();
     let catn = job_edges(&args.jobs, Bin::Catenoid).unwrap_or_default();
-    let hyp = job_edges(&args.jobs, Bin::Hyperboloid).context("--beat needs --hyperboloid")?;
+    let hyp = job_edges(&args.jobs, Bin::Hyperboloid).unwrap_or_default();
 
-    let mut gpu = GpuContext::init_headless().context("init_headless")?;
+    let mut gpu = init_gpu(args.width, args.height)?;
     let mut renderer = Renderer::new(&gpu)?;
-    let camera = Camera::orbit(Vec3::ZERO, 4.2);
+    let mut camera = Camera::orbit(Vec3::ZERO, 4.2);
+    camera.aspect = args.width as f32 / args.height as f32;
     let mut vis = VisualState {
         glow: 0.4,
         pulse: 0.2,

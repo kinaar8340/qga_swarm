@@ -91,9 +91,14 @@ Four named flags → `{s2,t2,k2,p2}.bgra` under `--capture`. `--helicoid`/`--cat
       --helicoid results/local/helicoid_edges.bin \
       --catenoid results/local/catenoid_edges.bin \
       --hyperboloid results/local/hyperboloid_edges.bin \
+      --width 1920 --height 1080 \
       --field "$HOME/Projects/shellscan/output/recipe/banded-larva" \
       --compare "$HOME/Projects/shellscan/output/recipe/compare_capsid-t7-p22_capsid-t7-polyoma.json" \
       --capture output/mp4/caterpillar_topology
+
+`--larva PATH` is an alias for `--field`. PATH may be the recipe dir or `net.json`.
+`--width` / `--height` default 1920×1080. Homology / hyperboloid parcels are optional;
+missing bins stay empty instead of failing closed.
     ./scripts/assemble_caterpillar.sh --out output/mp4/caterpillar_topology.mp4 \
       output/mp4/caterpillar_topology
 
