@@ -17,14 +17,16 @@ enum Bin {
     T2,
     K2,
     P2,
+    Helicoid,
+    Catenoid,
 }
 
 impl Bin {
     fn rgb(self) -> Vec3 {
         match self {
-            Bin::S2 => CYAN,
+            Bin::S2 | Bin::Helicoid => CYAN,
             Bin::T2 => GOLD,
-            Bin::K2 => ORANGE,
+            Bin::K2 | Bin::Catenoid => ORANGE,
             Bin::P2 => MAGENTA,
         }
     }
@@ -35,12 +37,18 @@ impl Bin {
             Bin::T2 => "t2",
             Bin::K2 => "k2",
             Bin::P2 => "p2",
+            Bin::Helicoid => "helicoid",
+            Bin::Catenoid => "catenoid",
         }
     }
 
     fn from_stem(name: &str) -> Option<Self> {
         let s = name.to_ascii_lowercase();
-        if s.starts_with("s2") {
+        if s.starts_with("helicoid") {
+            Some(Bin::Helicoid)
+        } else if s.starts_with("catenoid") {
+            Some(Bin::Catenoid)
+        } else if s.starts_with("s2") {
             Some(Bin::S2)
         } else if s.starts_with("t2") {
             Some(Bin::T2)
@@ -87,6 +95,14 @@ fn parse_args() -> Result<(u32, Vec<Job>, Option<PathBuf>)> {
                 path: PathBuf::from(it.next().context("--p2 PATH")?),
                 bin: Bin::P2,
             }),
+            "--helicoid" => named.push(Job {
+                path: PathBuf::from(it.next().context("--helicoid PATH")?),
+                bin: Bin::Helicoid,
+            }),
+            "--catenoid" => named.push(Job {
+                path: PathBuf::from(it.next().context("--catenoid PATH")?),
+                bin: Bin::Catenoid,
+            }),
             "--lines" => lines.push(PathBuf::from(it.next().context("--lines FILE")?)),
             other => bail!("unknown arg {other}"),
         }
@@ -95,7 +111,7 @@ fn parse_args() -> Result<(u32, Vec<Job>, Option<PathBuf>)> {
         bail!("pass-2 is --headless only");
     }
     if !named.is_empty() && !lines.is_empty() {
-        bail!("do not mix --lines with --s2/--t2/--k2/--p2");
+        bail!("do not mix --lines with named flags");
     }
     let mut jobs = named;
     if jobs.is_empty() {
@@ -109,13 +125,15 @@ fn parse_args() -> Result<(u32, Vec<Job>, Option<PathBuf>)> {
         }
     }
     if jobs.is_empty() {
-        bail!("need --lines FILE or --s2/--t2/--k2/--p2");
+        bail!("need --lines FILE or --s2/--t2/--k2/--p2/--helicoid/--catenoid");
     }
     jobs.sort_by_key(|j| match j.bin {
         Bin::S2 => 0,
         Bin::T2 => 1,
         Bin::K2 => 2,
         Bin::P2 => 3,
+        Bin::Helicoid => 4,
+        Bin::Catenoid => 5,
     });
     Ok((frames.max(1), jobs, capture))
 }

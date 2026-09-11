@@ -48,5 +48,11 @@ This repo consumes those dumps and four CPU wire generators.
       --k2 results/local/k2_edges.bin \
       --p2 results/local/p2_edges.bin \
       --capture /tmp/qga_swarm_four
+    python3 workers/helicoid.py --out /tmp/helicoid_edges.bin
+    python3 workers/catenoid.py --out /tmp/catenoid_edges.bin
+    cargo run -p qga-swarm-preview -- --headless --frames 8 \
+      --helicoid results/local/helicoid_edges.bin \
+      --catenoid results/local/catenoid_edges.bin \
+      --capture /tmp/qga_swarm_hc
 
-Four named flags → `{s2,t2,k2,p2}.bgra` under `--capture`. `--lines` alone → `last.bgra` (cyan unless the stem is s2|t2|k2|p2). Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.
+Four named flags → `{s2,t2,k2,p2}.bgra` under `--capture`. `--helicoid`/`--catenoid` → `{helicoid,catenoid}.bgra`. `--lines` alone → `last.bgra` (cyan unless the stem is s2|t2|k2|p2|helicoid|catenoid). `--local` writes homology plus H/C QGAE. Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.
