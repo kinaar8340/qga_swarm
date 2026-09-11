@@ -83,6 +83,8 @@ Workers never open a GpuContext.
   geodesic orbs (table-sized), not GpuParticle. Do not parse YAML in the preview loop.
 - hang-chrysalis is a Model close (χ=2, paint none). Do not snap setae onto Goldberg
   faces. Do not recut the chaetotaxy strip. Recipe is not morphogenesis.
+- caterpillar-body is a Model animal (tapered tube + parts). Four-bin witness only.
+  Not a photograph. Not a pin bump.
 
 Binaries print claims=Software fact.
 

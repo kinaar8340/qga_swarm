@@ -191,8 +191,9 @@ fn parse_args() -> Result<Args> {
         Some("caterpillar-skin") => Some(Beat::CaterpillarSkin),
         Some("caterpillar-chaeta") => Some(Beat::CaterpillarChaeta),
         Some("hang-chrysalis") => Some(Beat::HangChrysalis),
+        Some("caterpillar-body") => Some(Beat::CaterpillarBody),
         Some(other) => bail!(
-            "unknown --beat {other}; expected caterpillar, caterpillar-grow, caterpillar-skin, caterpillar-chaeta, or hang-chrysalis"
+            "unknown --beat {other}; expected caterpillar, caterpillar-grow, caterpillar-skin, caterpillar-chaeta, hang-chrysalis, or caterpillar-body"
         ),
     };
     if larva.is_none() {
@@ -208,7 +209,8 @@ fn parse_args() -> Result<Args> {
                 | Beat::CaterpillarSkin
                 | Beat::Caterpillar
                 | Beat::CaterpillarChaeta
-                | Beat::HangChrysalis,
+                | Beat::HangChrysalis
+                | Beat::CaterpillarBody,
         )
     ) && larva.is_none()
     {
@@ -355,6 +357,7 @@ enum Beat {
     CaterpillarSkin,
     CaterpillarChaeta,
     HangChrysalis,
+    CaterpillarBody,
 }
 
 fn theta_capture_stem(path: &Path) -> String {
@@ -2149,6 +2152,369 @@ fn run_hang(args: Args) -> Result<()> {
     Ok(())
 }
 
+const TAPER_S: [f32; 7] = [0.00, 0.08, 0.20, 0.45, 0.75, 0.92, 1.00];
+const TAPER_R: [f32; 7] = [0.35, 0.55, 0.70, 1.00, 0.85, 0.55, 0.30];
+const POLYXENES_RGBA: [[f32; 4]; 4] = [
+    [0.08, 0.08, 0.08, 1.00],
+    [1.00, 0.45, 0.12, 1.00],
+    [0.22, 0.55, 0.22, 1.00],
+    [0.92, 0.92, 0.90, 1.00],
+];
+
+fn taper_r(s: f32) -> f32 {
+    let s = s.clamp(0.0, 1.0);
+    for i in 0..6 {
+        if s <= TAPER_S[i + 1] {
+            let t = (s - TAPER_S[i]) / (TAPER_S[i + 1] - TAPER_S[i]);
+            return TAPER_R[i] + t * (TAPER_R[i + 1] - TAPER_R[i]);
+        }
+    }
+    TAPER_R[6]
+}
+
+fn tube_point(s: f32, phi_deg: f32, height: f32) -> Vec3 {
+    let s = s.clamp(0.0, 1.0);
+    let z = 0.5 * height - s * height;
+    let r = taper_r(s);
+    let p = phi_deg.to_radians();
+    Vec3::new(r * p.cos(), r * p.sin(), z)
+}
+
+fn tube_normal(_s: f32, phi_deg: f32) -> Vec3 {
+    let p = phi_deg.to_radians();
+    Vec3::new(p.cos(), p.sin(), 0.0)
+}
+
+fn tube_rings(n_seg: u32, n_phi: u32, height: f32) -> Vec<Vec<Vec3>> {
+    let n_seg = n_seg.max(1);
+    let n_phi = n_phi.max(8);
+    let n_rings = n_seg + 1;
+    let mut rings = vec![vec![Vec3::ZERO; n_phi as usize]; n_rings as usize];
+    for i in 0..n_rings {
+        let s = i as f32 / 13.0;
+        let z = 0.5 * height - s * height;
+        let r = taper_r(s);
+        for j in 0..n_phi {
+            let phi = std::f32::consts::TAU * j as f32 / n_phi as f32;
+            rings[i as usize][j as usize] = Vec3::new(r * phi.cos(), r * phi.sin(), z);
+        }
+    }
+    rings
+}
+
+fn tube_paint_bits(s: f32, phi_deg: f32, n_seg: u32, atlas: Option<&Chaetotaxy>) -> usize {
+    let phi = ((phi_deg % 360.0) + 360.0) % 360.0;
+    let phi_abs = if phi > 180.0 { 360.0 - phi } else { phi };
+    let seg = (s * 13.0).floor().clamp(0.0, 12.0) as u32;
+    let near_joint = {
+        let mut d = 1.0f32;
+        for k in 1..n_seg {
+            d = d.min((s - k as f32 / 13.0).abs());
+        }
+        d < 0.028
+    };
+    let ventral = phi_abs > 145.0 && phi_abs < 178.0;
+    let proleg_seg = matches!(seg, 5 | 6 | 7 | 8 | 12);
+    if ventral && proleg_seg && n_seg > seg {
+        return 3;
+    }
+    if let Some(atlas) = atlas {
+        for site in &atlas.sites {
+            if site.group != "D" && site.group != "SD" && site.group != "XD" {
+                continue;
+            }
+            if site.s > (n_seg as f32 + 0.5) / 13.0 {
+                continue;
+            }
+            let dphi = shortest_dphi(phi_abs, site.phi_deg.abs()).abs();
+            if (site.s - s).abs() < 0.055 && dphi < 16.0 {
+                return 1;
+            }
+        }
+    }
+    if near_joint {
+        return 0;
+    }
+    2
+}
+
+fn tube_verts(
+    rings: &[Vec<Vec3>],
+    n_seg: u32,
+    paint_a: f32,
+    atlas: Option<&Chaetotaxy>,
+) -> Vec<LineVert> {
+    let n_phi = rings.first().map(|r| r.len() as u32).unwrap_or(36);
+    let bone = [BONE.x, BONE.y, BONE.z, 1.0];
+    let mut out = Vec::new();
+    let push = |out: &mut Vec<LineVert>, a: Vec3, b: Vec3, bits: usize| {
+        let col = mix4(bone, POLYXENES_RGBA[bits], paint_a);
+        out.push(LineVert {
+            pos: a.into(),
+            pad: 0.0,
+            color: col,
+        });
+        out.push(LineVert {
+            pos: b.into(),
+            pad: 0.0,
+            color: col,
+        });
+    };
+    for (i, ring) in rings.iter().enumerate() {
+        let s = i as f32 / 13.0;
+        for j in 0..n_phi {
+            let j2 = ((j + 1) % n_phi) as usize;
+            let phi = 360.0 * j as f32 / n_phi as f32;
+            let bits = tube_paint_bits(s, phi, n_seg, atlas);
+            push(&mut out, ring[j as usize], ring[j2], bits);
+        }
+    }
+    for i in 0..n_seg {
+        let s = (i as f32 + 0.5) / 13.0;
+        for j in 0..n_phi {
+            let phi = 360.0 * j as f32 / n_phi as f32;
+            let bits = tube_paint_bits(s, phi, n_seg, atlas);
+            push(
+                &mut out,
+                rings[i as usize][j as usize],
+                rings[(i + 1) as usize][j as usize],
+                bits,
+            );
+        }
+    }
+    out
+}
+
+fn head_cap(height: f32) -> Vec<[Vec3; 2]> {
+    let n = 10u32;
+    let s = 0.0;
+    let pole = Vec3::new(0.0, 0.0, 0.5 * height + 0.10);
+    let mut segs = Vec::new();
+    let mut ring = Vec::new();
+    for j in 0..n {
+        let phi = 360.0 * j as f32 / n as f32;
+        ring.push(tube_point(s, phi, height));
+    }
+    for j in 0..n {
+        let j2 = ((j + 1) % n) as usize;
+        segs.push([ring[j as usize], ring[j2]]);
+        segs.push([ring[j as usize], pole]);
+    }
+    segs
+}
+
+fn gold_ring(center: Vec3, normal: Vec3, rad: f32) -> Vec<[Vec3; 2]> {
+    let n = Vec3::new(normal.x, normal.y, 0.0).normalize_or_zero();
+    let tan = if n.length() < 1e-4 {
+        Vec3::X
+    } else {
+        n.cross(Vec3::Z).normalize_or_zero()
+    };
+    let bit = n.cross(tan).normalize_or_zero();
+    let nseg = 8;
+    let mut pts = Vec::new();
+    for i in 0..nseg {
+        let a = std::f32::consts::TAU * i as f32 / nseg as f32;
+        pts.push(center + rad * (tan * a.cos() + bit * a.sin()));
+    }
+    let mut segs = Vec::new();
+    for i in 0..nseg {
+        segs.push([pts[i], pts[(i + 1) % nseg]]);
+    }
+    segs
+}
+
+fn body_hud(beat: &str, instar: &str, painted: bool) -> Vec<HudVert> {
+    const PANEL: [f32; 4] = [0.02, 0.04, 0.08, 0.72];
+    const INK: [f32; 4] = [0.92, 0.95, 1.00, 0.92];
+    const GOLD_A: [f32; 4] = [1.00, 0.78, 0.38, 0.95];
+    let mut v = Vec::new();
+    hud_quad(&mut v, -0.96, 0.50, -0.38, 0.94, PANEL);
+    hud_text(&mut v, -0.94, 0.90, 0.016, "POLYXENES", GOLD_A);
+    hud_text(&mut v, -0.94, 0.84, 0.014, "MODEL", INK);
+    hud_text(&mut v, -0.94, 0.78, 0.014, "TAPERED TUBE", INK);
+    hud_text(
+        &mut v,
+        -0.94,
+        0.72,
+        0.014,
+        if painted {
+            "PAINT ON TUBE"
+        } else {
+            "NO PAINT YET"
+        },
+        INK,
+    );
+    hud_text(&mut v, -0.94, 0.66, 0.014, "OPEN", GOLD_A);
+    hud_text(&mut v, -0.94, 0.60, 0.012, "NOT CHI=2", INK);
+    hud_quad(&mut v, 0.38, 0.50, 0.96, 0.94, PANEL);
+    hud_text(&mut v, 0.40, 0.90, 0.016, "REFUSE", GOLD_A);
+    hud_text(&mut v, 0.40, 0.84, 0.014, "HYPOTHESIS / MODEL", INK);
+    hud_text(&mut v, 0.40, 0.78, 0.014, "NOT A PHOTOGRAPH", INK);
+    hud_text(&mut v, 0.40, 0.72, 0.014, "CATALOG CANNOT", INK);
+    hud_text(&mut v, 0.40, 0.66, 0.014, "PROVE OCCUPANT", INK);
+    hud_text(&mut v, 0.40, 0.60, 0.012, "NOT MORPHOGENESIS", INK);
+    hud_text(&mut v, -0.20, 0.46, 0.014, beat, GOLD_A);
+    hud_text(&mut v, -0.20, 0.40, 0.012, instar, INK);
+    v
+}
+
+fn run_body(args: Args) -> Result<()> {
+    let raw = args
+        .larva
+        .as_deref()
+        .or(args.field.as_deref())
+        .context("--beat caterpillar-body needs --larva")?;
+    let dir = resolve_catalog_dir(raw)?;
+    let atlas = resolve_chaeta_path(args.chaeta.as_deref(), &dir)
+        .and_then(|p| load_chaetotaxy(&p).ok())
+        .or_else(|| load_chaetotaxy(&dir.join("chaetotaxy.json")).ok());
+
+    let mut gpu = init_gpu(args.width, args.height)?;
+    let mut renderer = Renderer::new(&gpu)?;
+    let mut camera = Camera::orbit(Vec3::ZERO, 4.4);
+    camera.yaw = 0.85;
+    camera.pitch = 0.22;
+    camera.aspect = args.width as f32 / args.height as f32;
+    let mut vis = VisualState {
+        glow: 0.35,
+        pulse: 0.2,
+        tube_radius: 0.02,
+        zener: 2.4,
+        ..VisualState::default()
+    };
+
+    let frames = args.frames.max(1);
+    let capture_dir = args.capture.as_deref();
+    if let Some(d) = capture_dir {
+        std::fs::create_dir_all(d)?;
+    }
+    let height = 2.0f32;
+    let n_phi = 36u32;
+
+    for i in 0..frames {
+        let (stage, frac, flash) = grow_sheet(i, frames);
+        let time = i as f32 / 24.0;
+        vis.pulse = 0.5 + 0.5 * time.sin();
+        let stage = stage.min(5);
+        let (n_seg, instar, paint_a, name) = match stage {
+            0 => (3u32, 1u8, 0.0, "L1"),
+            1 => (5, 2, 0.0, "L2"),
+            2 => (8, 3, 0.0, "L3"),
+            3 => (11, 4, 0.0, "L4"),
+            4 => (13, 5, frac, "L5 PAINT"),
+            _ => (13, 5, 1.0, "L5 HOLD"),
+        };
+        let rings = tube_rings(n_seg, n_phi, height);
+        let mut verts = tube_verts(&rings, n_seg, paint_a, atlas.as_ref());
+        verts.extend(edges_to_verts(&head_cap(height), BONE * 0.85));
+
+        let eye_r = 0.045;
+        for sign in [-1.0f32, 1.0] {
+            let p = tube_point(0.02, 38.0 * sign, height);
+            renderer.draw_geodesic_orb_alpha(
+                Mat4::from_translation(p) * Mat4::from_scale(Vec3::splat(eye_r)),
+                Vec3::new(0.12, 0.10, 0.08),
+                1.0,
+            );
+        }
+
+        if let Some(atlas) = atlas.as_ref() {
+            for site in &atlas.sites {
+                if site.instar > instar {
+                    continue;
+                }
+                if flash {
+                    continue;
+                }
+                let phis: Vec<f32> = if site.mirror() {
+                    vec![site.phi_deg, -site.phi_deg]
+                } else {
+                    vec![site.phi_deg]
+                };
+                for &phi in &phis {
+                    if site.s > (n_seg as f32 + 0.35) / 13.0 {
+                        continue;
+                    }
+                    let p = tube_point(site.s, phi, height);
+                    let n = tube_normal(site.s, phi);
+                    if site.kind == "tentacle" {
+                        let len = 0.55 * site.amp * SIGMA[(instar - 1) as usize];
+                        verts.extend(edges_to_verts(&radial_tick(p, phi, len, 3), GOLD));
+                        let tip = p + n * len;
+                        renderer.draw_geodesic_orb_alpha(
+                            Mat4::from_translation(tip) * Mat4::from_scale(Vec3::splat(0.035)),
+                            GOLD,
+                            1.0,
+                        );
+                    } else if site.kind == "spiracle" {
+                        verts.extend(edges_to_verts(&gold_ring(p + n * 0.02, n, 0.035), GOLD));
+                    } else {
+                        let len = 0.20 * site.amp * SIGMA[(instar - 1) as usize];
+                        let tip = p + n * len;
+                        let col = Vec3::new(
+                            POLYXENES_RGBA[site.section()][0],
+                            POLYXENES_RGBA[site.section()][1],
+                            POLYXENES_RGBA[site.section()][2],
+                        );
+                        verts.extend(edges_to_verts(&[[p, tip]], col));
+                        renderer.draw_geodesic_orb_alpha(
+                            Mat4::from_translation(tip)
+                                * Mat4::from_scale(Vec3::splat(
+                                    (0.012 + 0.02 * site.amp).max(0.01),
+                                )),
+                            col,
+                            1.0,
+                        );
+                    }
+                }
+            }
+        }
+
+        if instar >= 3 {
+            for (seg, live) in [(5u32, 3u8), (6, 3), (7, 4), (8, 4), (12, 5)] {
+                if instar < live || n_seg <= seg {
+                    continue;
+                }
+                let s = (seg as f32 + 0.5) / 13.0;
+                for sign in [-1.0f32, 1.0] {
+                    let phi = 162.0 * sign;
+                    let p = tube_point(s, phi, height);
+                    let n = tube_normal(s, phi);
+                    let pad = p - n * 0.12;
+                    let white = Vec3::new(
+                        POLYXENES_RGBA[3][0],
+                        POLYXENES_RGBA[3][1],
+                        POLYXENES_RGBA[3][2],
+                    );
+                    verts.extend(edges_to_verts(&[[p, pad]], white));
+                    verts.extend(edges_to_verts(&gold_ring(pad, n, 0.06), white));
+                }
+            }
+        }
+
+        renderer.update_line_verts(&gpu, &verts);
+        renderer.write_particles(&gpu, &[])?;
+        renderer.write_hud(
+            &gpu,
+            &body_hud(if flash { "MOLT" } else { name }, name, paint_a > 0.05),
+        )?;
+        let grab = capture_dir.is_some();
+        if let Some(frame) = renderer.render(&mut gpu, &camera, &vis, time, grab)? {
+            if let Some(d) = capture_dir {
+                write_bgra(
+                    d,
+                    &format!("frame_{i:04}"),
+                    &frame.bgra,
+                    frame.width,
+                    frame.height,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     print_claim_banner("homology remesh / inner_cone film");
     let args = parse_args()?;
@@ -2158,6 +2524,7 @@ fn main() -> Result<()> {
         Some(Beat::CaterpillarSkin) => run_skin(args),
         Some(Beat::CaterpillarChaeta) => run_chaeta(args),
         Some(Beat::HangChrysalis) => run_hang(args),
+        Some(Beat::CaterpillarBody) => run_body(args),
         None => run_stills(args),
     }
 }
