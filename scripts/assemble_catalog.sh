@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FFMPEG="/usr/bin/ffmpeg"
-STEMS=(s2 t2 k2 p2 helicoid catenoid)
+STEMS=(s2 t2 k2 p2 helicoid catenoid theta0 theta25 theta50)
 OUT="$ROOT/output/mp4/assemble_catalog.mp4"
 HOLD_S=2
 FPS=24
