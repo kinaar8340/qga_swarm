@@ -3,6 +3,9 @@
 Assemble homology wires and catalog dumps into one captured MP4.
 Last mile is qga_gpu on bud. Workers emit files.
 
+Playground tracks: 6 (GPU parent / CPU workers) + 0 (bin/fleet).
+Not Track 3 until workers have auth. Not Track 9.
+
 Life on the helicoid, catalog on the catenoid. The catalog cannot
 prove it captured the occupant. This repo does not prove it either.
 
