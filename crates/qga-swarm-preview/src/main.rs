@@ -120,6 +120,8 @@ fn parse_args() -> Result<Args> {
     let mut chaeta: Option<PathBuf> = None;
     let mut groups: Option<PathBuf> = None;
     let mut compare: Option<PathBuf> = None;
+    let mut tau = 0.0f32;
+    let mut helix_r = 0.0f32;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -133,6 +135,8 @@ fn parse_args() -> Result<Args> {
             "--larva" => larva = Some(PathBuf::from(it.next().context("--larva PATH")?)),
             "--chaeta" => chaeta = Some(PathBuf::from(it.next().context("--chaeta PATH")?)),
             "--groups" => groups = Some(PathBuf::from(it.next().context("--groups PATH")?)),
+            "--tau" => tau = it.next().context("--tau F")?.parse()?,
+            "--helix-r" => helix_r = it.next().context("--helix-r F")?.parse()?,
             "--compare" => compare = Some(PathBuf::from(it.next().context("--compare PATH")?)),
             "--s2" => named.push(Job {
                 path: PathBuf::from(it.next().context("--s2 PATH")?),
@@ -238,6 +242,8 @@ fn parse_args() -> Result<Args> {
         chaeta,
         groups,
         compare,
+        tau,
+        helix_r,
     })
 }
 
@@ -253,6 +259,8 @@ struct Args {
     chaeta: Option<PathBuf>,
     groups: Option<PathBuf>,
     compare: Option<PathBuf>,
+    tau: f32,
+    helix_r: f32,
 }
 
 /// `--larva` may be a recipe dir or `net.json`. `../shellscan/...` from
@@ -2158,9 +2166,6 @@ const R0_BULGE: f32 = 0.85;
 const A_BULGE: f32 = 0.15;
 const L5_RINGS: u32 = 25;
 const L5_SPAN: f32 = 24.0;
-/// Revolution hold first. Helical τ>0 waits until this is a sausage with waists.
-const BODY_TAU: f32 = 0.00;
-const HELIX_R: f32 = 0.00;
 const POLYXENES_RGBA: [[f32; 4]; 4] = [
     [0.08, 0.08, 0.08, 1.00],
     [1.00, 0.45, 0.12, 1.00],
@@ -2182,29 +2187,66 @@ fn screw_theta(s: f32) -> f32 {
     8.0 * std::f32::consts::PI * s.clamp(0.0, 1.0)
 }
 
-fn tube_point(s: f32, phi_deg: f32, _height: f32) -> Vec3 {
+#[derive(Clone, Copy)]
+struct BodyGeom {
+    tau: f32,
+    helix_r: f32,
+}
+
+fn tube_point(s: f32, phi_deg: f32, geom: BodyGeom) -> Vec3 {
     let s = s.clamp(0.0, 1.0);
     let z = 0.5 * BODY_LEN - s * BODY_LEN;
     let a = bulge_r(s);
     let phi = phi_deg.to_radians();
     let x_rev = Vec3::new(a * phi.cos(), a * phi.sin(), z);
+    if geom.tau <= 1e-6 && geom.helix_r <= 1e-6 {
+        return x_rev;
+    }
     let th = screw_theta(s);
-    let cr = HELIX_R + a * phi.cos();
+    let cr = geom.helix_r + a * phi.cos();
     let x_hel = Vec3::new(cr * th.cos(), cr * th.sin(), z + a * phi.sin());
-    x_rev * (1.0 - BODY_TAU) + x_hel * BODY_TAU
+    x_rev * (1.0 - geom.tau) + x_hel * geom.tau
 }
 
-fn tube_normal(s: f32, phi_deg: f32) -> Vec3 {
-    let phi = phi_deg.to_radians() + BODY_TAU * screw_theta(s);
+fn tube_normal(s: f32, phi_deg: f32, geom: BodyGeom) -> Vec3 {
+    let phi = phi_deg.to_radians() + geom.tau * screw_theta(s);
     Vec3::new(phi.cos(), phi.sin(), 0.0)
 }
 
-fn helical_azimuth_deg(s: f32, phi_deg: f32) -> f32 {
-    let p = tube_point(s, phi_deg, 0.0);
+fn helical_azimuth_deg(s: f32, phi_deg: f32, geom: BodyGeom) -> f32 {
+    let p = tube_point(s, phi_deg, geom);
     p.y.atan2(p.x).to_degrees()
 }
 
-fn tube_rings(n_seg: u32, n_phi: u32, height: f32) -> Vec<Vec<Vec3>> {
+fn helical_phi_order_ok(atlas: &Chaetotaxy, geom: BodyGeom) -> bool {
+    let mut buckets: [Vec<f32>; 5] = Default::default();
+    for site in &atlas.sites {
+        let g = match site.group.as_str() {
+            "XD" | "D" => 0,
+            "SD" => 1,
+            "L" => 2,
+            "SV" => 3,
+            "V" => 4,
+            _ => continue,
+        };
+        let az = helical_azimuth_deg(site.s, site.phi_deg, geom).abs();
+        buckets[g].push(az);
+    }
+    let mut prev = -1.0f32;
+    for b in &buckets {
+        if b.is_empty() {
+            continue;
+        }
+        let m = b.iter().sum::<f32>() / b.len() as f32;
+        if m + 1e-3 < prev {
+            return false;
+        }
+        prev = m;
+    }
+    true
+}
+
+fn tube_rings(n_seg: u32, n_phi: u32, geom: BodyGeom) -> Vec<Vec<Vec3>> {
     let n_seg = n_seg.max(1);
     let n_phi = n_phi.max(8);
     let n_rings = n_seg + 1;
@@ -2213,7 +2255,7 @@ fn tube_rings(n_seg: u32, n_phi: u32, height: f32) -> Vec<Vec<Vec3>> {
         let s = i as f32 / L5_SPAN;
         for j in 0..n_phi {
             let phi_deg = 360.0 * j as f32 / n_phi as f32;
-            rings[i as usize][j as usize] = tube_point(s, phi_deg, height);
+            rings[i as usize][j as usize] = tube_point(s, phi_deg, geom);
         }
     }
     rings
@@ -2306,7 +2348,7 @@ fn tube_verts(
     out
 }
 
-fn head_cap(height: f32) -> Vec<[Vec3; 2]> {
+fn head_cap(geom: BodyGeom) -> Vec<[Vec3; 2]> {
     let n = 10u32;
     let s = 0.0;
     let pole = Vec3::new(0.0, 0.0, 0.5 * BODY_LEN + 0.12);
@@ -2314,7 +2356,7 @@ fn head_cap(height: f32) -> Vec<[Vec3; 2]> {
     let mut ring = Vec::new();
     for j in 0..n {
         let phi = 360.0 * j as f32 / n as f32;
-        ring.push(tube_point(s, phi, height));
+        ring.push(tube_point(s, phi, geom));
     }
     for j in 0..n {
         let j2 = ((j + 1) % n) as usize;
@@ -2345,7 +2387,14 @@ fn gold_ring(center: Vec3, normal: Vec3, rad: f32) -> Vec<[Vec3; 2]> {
     segs
 }
 
-fn body_hud(beat: &str, instar: &str, painted: bool, hel_dphi: f32) -> Vec<HudVert> {
+fn body_hud(
+    beat: &str,
+    instar: &str,
+    painted: bool,
+    hel_dphi: f32,
+    geom: BodyGeom,
+    order_ok: bool,
+) -> Vec<HudVert> {
     const PANEL: [f32; 4] = [0.02, 0.04, 0.08, 0.72];
     const INK: [f32; 4] = [0.92, 0.95, 1.00, 0.92];
     const GOLD_A: [f32; 4] = [1.00, 0.78, 0.38, 0.95];
@@ -2370,10 +2419,43 @@ fn body_hud(beat: &str, instar: &str, painted: bool, hel_dphi: f32) -> Vec<HudVe
     hud_text(&mut v, -0.94, 0.60, 0.012, "NOT CHI=2", INK);
     hud_text(&mut v, -0.94, 0.54, 0.011, "NECKS = BELTS", INK);
     hud_text(&mut v, -0.94, 0.48, 0.011, "NOT T2 CATALOG", INK);
-    if painted {
-        hud_text(&mut v, -0.94, 0.42, 0.011, "SPOTS D/SD", INK);
-    }
-    let _ = hel_dphi;
+    hud_text(
+        &mut v,
+        -0.94,
+        0.42,
+        0.011,
+        &format!("TAU {:.2}", geom.tau),
+        INK,
+    );
+    hud_text(&mut v, -0.94, 0.36, 0.011, "P/L 0.25", INK);
+    hud_text(
+        &mut v,
+        -0.94,
+        0.30,
+        0.011,
+        &format!("R {:.2}", geom.helix_r),
+        INK,
+    );
+    hud_text(
+        &mut v,
+        -0.94,
+        0.24,
+        0.011,
+        if order_ok {
+            "PHI ORDER OK"
+        } else {
+            "PHI ORDER NO"
+        },
+        if order_ok { INK } else { GOLD_A },
+    );
+    hud_text(
+        &mut v,
+        -0.94,
+        0.18,
+        0.011,
+        &format!("HELICAL DPHI {:.1}", hel_dphi),
+        GOLD_A,
+    );
     hud_quad(&mut v, 0.38, 0.50, 0.96, 0.94, PANEL);
     hud_text(&mut v, 0.40, 0.90, 0.016, "REFUSE", GOLD_A);
     hud_text(&mut v, 0.40, 0.84, 0.014, "HYPOTHESIS / MODEL", INK);
@@ -2415,17 +2497,27 @@ fn run_body(args: Args) -> Result<()> {
     if let Some(d) = capture_dir {
         std::fs::create_dir_all(d)?;
     }
-    let height = 2.0f32;
     let n_phi = 36u32;
+    let geom = BodyGeom {
+        tau: args.tau.max(0.0),
+        helix_r: args.helix_r.max(0.0),
+    };
     let pitch = BODY_LEN / 4.0;
     let pmin = 2.0 * A_BULGE;
     eprintln!(
-        "helical pitch test: P={pitch:.3} 2a={pmin:.3} clearance={}  tau={BODY_TAU}  claims=Model",
-        if pitch > pmin { "ok" } else { "OVERLAP" }
+        "helical pitch test: P={pitch:.3} 2a={pmin:.3} clearance={}  tau={:.2} R={:.2}  claims=Model",
+        if pitch > pmin { "ok" } else { "OVERLAP" },
+        geom.tau,
+        geom.helix_r
     );
 
     for i in 0..frames {
-        let (stage, frac, flash) = grow_sheet(i, frames);
+        let hold = frames <= 48;
+        let (stage, frac, flash) = if hold {
+            (5u8, 1.0, false)
+        } else {
+            grow_sheet(i, frames)
+        };
         let time = i as f32 / 24.0;
         vis.pulse = 0.5 + 0.5 * time.sin();
         let stage = stage.min(5);
@@ -2446,13 +2538,13 @@ fn run_body(args: Args) -> Result<()> {
         }
         .max(n_from)
         .min(L5_RINGS - 1);
-        let rings = tube_rings(n_seg, n_phi, height);
+        let rings = tube_rings(n_seg, n_phi, geom);
         let mut verts = tube_verts(&rings, n_seg, paint_a, atlas.as_ref());
-        verts.extend(edges_to_verts(&head_cap(height), BONE * 0.85));
+        verts.extend(edges_to_verts(&head_cap(geom), BONE * 0.85));
 
         let eye_r = 0.045;
         for sign in [-1.0f32, 1.0] {
-            let p = tube_point(0.02, 38.0 * sign, height);
+            let p = tube_point(0.02, 38.0 * sign, geom);
             renderer.draw_geodesic_orb_alpha(
                 Mat4::from_translation(p) * Mat4::from_scale(Vec3::splat(eye_r)),
                 Vec3::new(0.12, 0.10, 0.08),
@@ -2477,8 +2569,8 @@ fn run_body(args: Args) -> Result<()> {
                     if site.s > (n_seg as f32 + 0.35) / L5_SPAN {
                         continue;
                     }
-                    let p = tube_point(site.s, phi, height);
-                    let n = tube_normal(site.s, phi);
+                    let p = tube_point(site.s, phi, geom);
+                    let n = tube_normal(site.s, phi, geom);
                     if site.kind == "tentacle" {
                         let len = 0.55 * site.amp * SIGMA[(instar - 1) as usize];
                         verts.extend(edges_to_verts(&radial_tick(p, phi, len, 3), GOLD));
@@ -2519,8 +2611,8 @@ fn run_body(args: Args) -> Result<()> {
                 }
                 for sign in [-1.0f32, 1.0] {
                     let phi = 162.0 * sign;
-                    let p = tube_point(s, phi, height);
-                    let n = tube_normal(s, phi);
+                    let p = tube_point(s, phi, geom);
+                    let n = tube_normal(s, phi, geom);
                     let pad = p - n * 0.12;
                     let white = Vec3::new(
                         POLYXENES_RGBA[3][0],
@@ -2542,12 +2634,16 @@ fn run_body(args: Args) -> Result<()> {
                 if site.instar > instar {
                     continue;
                 }
-                let az = helical_azimuth_deg(site.s, site.phi_deg);
+                let az = helical_azimuth_deg(site.s, site.phi_deg, geom);
                 hel_acc += shortest_dphi(az, site.phi_deg).abs();
                 hel_n += 1.0;
             }
         }
         let hel_dphi = if hel_n > 0.0 { hel_acc / hel_n } else { 0.0 };
+        let order_ok = atlas
+            .as_ref()
+            .map(|a| helical_phi_order_ok(a, geom))
+            .unwrap_or(true);
         renderer.write_hud(
             &gpu,
             &body_hud(
@@ -2555,6 +2651,8 @@ fn run_body(args: Args) -> Result<()> {
                 name,
                 paint_a > 0.05,
                 hel_dphi,
+                geom,
+                order_ok,
             ),
         )?;
         let grab = capture_dir.is_some();

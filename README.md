@@ -132,9 +132,9 @@ Skeleton then skin (two films, glued at L5 freeze). Paint does not grow.
       output/capture/caterpillar_chaeta
 
 `--beat caterpillar-body` is a Model animal: four 2π bulges on one open tube.
-`BODY_TAU=0.10` blends revolution → helical segments (P=L/4). Not T², not Bouligand,
-not associate θ. Helical capture: `output/capture/caterpillar_body_helical`.
-Not a photograph. Not morphogenesis. Other films stay on disk.
+`--tau` / `--helix-r` are the tube screw (default 0). Chart twist ψ stays 0.
+48-frame captures are L5 hold + orbit. Do not overwrite the τ=0 sausage until it holds.
+Not T², not Bouligand, not associate θ. Not morphogenesis.
 
     cargo run -p qga-swarm-preview --release -- \
       --beat caterpillar-body --headless --frames 1440 --width 1920 --height 1080 \
