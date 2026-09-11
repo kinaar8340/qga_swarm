@@ -13,7 +13,7 @@ local_pack() {
 }
 
 remote_pack() {
-  "$FLEET" copy "$ROOT/workers" /tmp/qga_swarm_workers
+  "$FLEET" copy "$ROOT/workers/" /tmp/qga_swarm_workers/
   i=0
   for h in "${HOSTS[@]}"; do
     s="${MAP[$i]}"
