@@ -2,7 +2,10 @@
 
 use anyhow::{bail, Context, Result};
 use glam::{Mat4, Vec3};
-use qga_gpu::{print_claim_banner, Camera, GpuContext, LineStyle, Renderer, VisualState};
+use qga_gpu::{
+    hud_quad, hud_text, print_claim_banner, Camera, GpuContext, HudVert, LineStyle, Renderer,
+    VisualState,
+};
 use qga_swarm_convert::{glam_edges, load_qgae};
 use std::path::{Path, PathBuf};
 
@@ -185,6 +188,26 @@ fn draw_hubs(renderer: &mut Renderer) {
     );
 }
 
+fn catalog_and_refuse() -> Vec<HudVert> {
+    const PANEL: [f32; 4] = [0.02, 0.04, 0.08, 0.72];
+    const INK: [f32; 4] = [0.92, 0.95, 1.00, 0.92];
+    const GOLD_A: [f32; 4] = [1.00, 0.78, 0.38, 0.95];
+    let mut v = Vec::new();
+    hud_quad(&mut v, -0.96, 0.58, -0.40, 0.92, PANEL);
+    hud_text(&mut v, -0.94, 0.88, 0.016, "T=3 CATALOG", GOLD_A);
+    hud_text(&mut v, -0.94, 0.82, 0.014, "CARDS + HUBS", INK);
+    hud_text(&mut v, -0.94, 0.76, 0.014, "NOT OCEAN", INK);
+    hud_text(&mut v, -0.94, 0.70, 0.014, "SHELLSCAN DUMP", INK);
+    hud_text(&mut v, -0.94, 0.64, 0.014, "READ ONLY", INK);
+    hud_quad(&mut v, 0.40, 0.50, 0.96, 0.92, PANEL);
+    hud_text(&mut v, 0.42, 0.88, 0.016, "REFUSE", GOLD_A);
+    hud_text(&mut v, 0.42, 0.82, 0.014, "HYPOTHESIS / MODEL", INK);
+    hud_text(&mut v, 0.42, 0.76, 0.014, "FACEPLATE UNUSED", INK);
+    hud_text(&mut v, 0.42, 0.70, 0.014, "CATALOG CANNOT", INK);
+    hud_text(&mut v, 0.42, 0.64, 0.014, "PROVE OCCUPANT", INK);
+    v
+}
+
 fn main() -> Result<()> {
     print_claim_banner("homology remesh / inner_cone film");
     let (frames, jobs, capture) = parse_args()?;
@@ -204,7 +227,7 @@ fn main() -> Result<()> {
         let parcel = load_qgae(&job.path).map_err(|e| anyhow::anyhow!("{e}"))?;
         let edges = glam_edges(&parcel);
         renderer.update_line_segments(&gpu, &edges, style(job.bin.rgb()));
-        renderer.write_hud(&gpu, &[])?;
+        renderer.write_hud(&gpu, &catalog_and_refuse())?;
 
         let mut last: Option<(Vec<u8>, u32, u32)> = None;
         for i in 0..frames {

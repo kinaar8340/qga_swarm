@@ -81,4 +81,4 @@ Four named flags → `{s2,t2,k2,p2}.bgra` under `--capture`. `--helicoid`/`--cat
 
 Remote homology MAP is unchanged (bud2/6 s2, bud3/7 t2, bud4/8 k2, bud5/9 p2). Remote H/C: bud6 `helicoid_edges.bin`, bud7 `catenoid_edges.bin`. Theta stays `--local`. Never `bin/fleet grok`.
 
-θ family is Model; conjugate helicoid is not `helicoid.py`. Catalog stems are `s2 t2 k2 p2 helicoid catenoid theta0 theta25 theta50` (fail-closed). Sidecar MP4 is not occupant proof. Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.
+θ family is Model; conjugate helicoid is not `helicoid.py`. Catalog stems are `s2 t2 k2 p2 helicoid catenoid theta0 theta25 theta50` (fail-closed). HUD is T=3 catalog + refuse cards (`write_hud`), not ocean particles and not occupant proof. Pin is `pins.toml` (`qga_gpu@b9c9994`). Never path-dep `~/Projects/qga_gpu`.
